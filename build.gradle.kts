@@ -36,6 +36,8 @@ dependencies {
 }
 
 intellijPlatform {
+    projectName = providers.gradleProperty("pluginName")
+
     pluginConfiguration {
         ideaVersion {
             sinceBuild = "261"

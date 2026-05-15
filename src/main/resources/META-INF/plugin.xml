@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.cryptiklemur.riderilspy</id>
-    <name>Rider-ILSpy</name>
-    <vendor email="aaron@cryptiklemur.com" url="https://github.com/cryptiklemur">cryptiklemur</vendor>
+    <name>ILSpy Integration</name>
+    <vendor email="cryptiklemur@gmail.com" url="https://github.com/cryptiklemur">cryptiklemur</vendor>
 
     <description><![CDATA[
         Replaces Rider's built-in decompiler with ILSpy for assembly browsing,
