@@ -35,7 +35,7 @@ internal sealed class MixedMethodBodyDisassembler : MethodBodyDisassembler
             CSharpDecompiler decompiler = new CSharpDecompiler(module, myResolver, mySettings);
             SyntaxTree syntaxTree = decompiler.Decompile(handle);
 
-            StringWriter csOutput = new StringWriter();
+            using StringWriter csOutput = new StringWriter();
             WriteCode(csOutput, mySettings, syntaxTree);
 
             Dictionary<ICSharpCode.Decompiler.IL.ILFunction, List<SequencePoint>> all = decompiler.CreateSequencePoints(syntaxTree);

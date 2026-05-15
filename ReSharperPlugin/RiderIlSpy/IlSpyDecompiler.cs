@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Threading;
@@ -38,34 +37,37 @@ public class IlSpyDecompiler
 
     public string DecompileAssemblyInfo(string assemblyPath, DecompilerSettings? settings = null, IReadOnlyList<string>? extraSearchDirs = null)
     {
-        CSharpDecompiler decompiler = CreateDecompiler(assemblyPath, settings ?? new DecompilerSettings(), extraSearchDirs);
+        DecompilerSettings effective = settings ?? new DecompilerSettings();
+        using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
+        UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, effective, extraSearchDirs);
+        CSharpDecompiler decompiler = new CSharpDecompiler(module, resolver, effective);
         return decompiler.DecompileModuleAndAssemblyAttributesToString();
     }
 
     private static string DecompileToCSharp(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs)
     {
-        CSharpDecompiler decompiler = CreateDecompiler(assemblyPath, settings, extraSearchDirs);
-        ITypeDefinition? type = decompiler.TypeSystem.MainModule.TopLevelTypeDefinitions
-            .FirstOrDefault(t => t.FullName == typeFullName);
+        using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
+        UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, settings, extraSearchDirs);
+        CSharpDecompiler decompiler = new CSharpDecompiler(module, resolver, settings);
+
+        FullTypeName ftn;
+        try { ftn = new FullTypeName(typeFullName); }
+        catch { return "// invalid type name: " + typeFullName; }
+
+        ITypeDefinition? type = decompiler.TypeSystem.MainModule.GetTypeDefinition(ftn);
         if (type == null) return "// type not found: " + typeFullName;
-        return decompiler.DecompileTypeAsString(new FullTypeName(typeFullName));
+        return decompiler.DecompileTypeAsString(ftn);
     }
 
     private static string DisassembleMixed(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs)
     {
-        PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
-        UniversalAssemblyResolver resolver = new UniversalAssemblyResolver(
-            assemblyPath,
-            settings.ThrowOnAssemblyResolveErrors,
-            module.DetectTargetFrameworkId());
-        if (extraSearchDirs != null)
-            foreach (string dir in extraSearchDirs)
-                resolver.AddSearchDirectory(dir);
+        using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
+        UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, settings, extraSearchDirs);
 
         TypeDefinitionHandle handle = FindTypeHandle(module, typeFullName);
         if (handle.IsNil) return "// type not found: " + typeFullName;
 
-        StringWriter sw = new StringWriter();
+        using StringWriter sw = new StringWriter();
         PlainTextOutput output = new PlainTextOutput(sw);
         MixedMethodBodyDisassembler bodyDisassembler = new MixedMethodBodyDisassembler(output, CancellationToken.None, settings, resolver)
         {
@@ -85,19 +87,13 @@ public class IlSpyDecompiler
 
     private static string DisassembleToIl(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs)
     {
-        PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
-        UniversalAssemblyResolver resolver = new UniversalAssemblyResolver(
-            assemblyPath,
-            settings.ThrowOnAssemblyResolveErrors,
-            module.DetectTargetFrameworkId());
-        if (extraSearchDirs != null)
-            foreach (string dir in extraSearchDirs)
-                resolver.AddSearchDirectory(dir);
+        using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
+        UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, settings, extraSearchDirs);
 
         TypeDefinitionHandle handle = FindTypeHandle(module, typeFullName);
         if (handle.IsNil) return "// type not found: " + typeFullName;
 
-        StringWriter sw = new StringWriter();
+        using StringWriter sw = new StringWriter();
         PlainTextOutput output = new PlainTextOutput(sw);
         ReflectionDisassembler disassembler = new ReflectionDisassembler(output, CancellationToken.None)
         {
@@ -110,32 +106,42 @@ public class IlSpyDecompiler
         return sw.ToString();
     }
 
+    private static UniversalAssemblyResolver BuildResolver(string assemblyPath, PEFile module, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs)
+    {
+        UniversalAssemblyResolver resolver = new UniversalAssemblyResolver(
+            assemblyPath,
+            settings.ThrowOnAssemblyResolveErrors,
+            module.DetectTargetFrameworkId());
+        if (extraSearchDirs != null)
+            foreach (string dir in extraSearchDirs)
+                resolver.AddSearchDirectory(dir);
+        return resolver;
+    }
+
     private static TypeDefinitionHandle FindTypeHandle(PEFile module, string typeFullName)
     {
         MetadataReader metadata = module.Metadata;
         foreach (TypeDefinitionHandle handle in metadata.TypeDefinitions)
         {
             TypeDefinition def = metadata.GetTypeDefinition(handle);
-            string ns = metadata.GetString(def.Namespace);
-            string name = metadata.GetString(def.Name);
-            string full = string.IsNullOrEmpty(ns) ? name : ns + "." + name;
-            if (full == typeFullName) return handle;
+            string built = BuildTypeFullName(metadata, def);
+            if (built == typeFullName) return handle;
         }
         return default;
     }
 
-    private static CSharpDecompiler CreateDecompiler(string assemblyPath, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs)
+    // Builds a CLR-reflection-style full name: `Namespace.Outer+Inner+Leaf` with generic arity
+    // baked into each segment (`List`1`). Rider's IClrTypeName.FullName uses the same shape.
+    private static string BuildTypeFullName(MetadataReader metadata, TypeDefinition def)
     {
-        if (extraSearchDirs == null || extraSearchDirs.Count == 0)
-            return new CSharpDecompiler(assemblyPath, settings);
-
-        PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
-        UniversalAssemblyResolver resolver = new UniversalAssemblyResolver(
-            assemblyPath,
-            settings.ThrowOnAssemblyResolveErrors,
-            module.DetectTargetFrameworkId());
-        foreach (string dir in extraSearchDirs)
-            resolver.AddSearchDirectory(dir);
-        return new CSharpDecompiler(module, resolver, settings);
+        string name = metadata.GetString(def.Name);
+        TypeDefinitionHandle declaringHandle = def.GetDeclaringType();
+        if (!declaringHandle.IsNil)
+        {
+            TypeDefinition decl = metadata.GetTypeDefinition(declaringHandle);
+            return BuildTypeFullName(metadata, decl) + "+" + name;
+        }
+        string ns = metadata.GetString(def.Namespace);
+        return string.IsNullOrEmpty(ns) ? name : ns + "." + name;
     }
 }
