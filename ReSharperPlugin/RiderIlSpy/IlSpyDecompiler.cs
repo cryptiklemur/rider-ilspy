@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
@@ -99,23 +100,65 @@ public class IlSpyDecompiler
     private static readonly object NeuterLock = new object();
     private static bool NeuterAttempted;
     private static bool NeuterSucceeded;
-    private static bool NeuterImplicitReferences()
+    private static string? NeuterFailureReason;
+
+    private static bool NeuterImplicitReferences() => NeuterImplicitReferences(out _);
+
+    private static bool NeuterImplicitReferences(out string? failureReason)
     {
         lock (NeuterLock)
         {
-            if (NeuterAttempted) return NeuterSucceeded;
+            if (NeuterAttempted)
+            {
+                failureReason = NeuterFailureReason;
+                return NeuterSucceeded;
+            }
             NeuterAttempted = true;
+
             try
             {
                 Type dts = typeof(DecompilerTypeSystem);
-                FieldInfo? field = dts.GetField("implicitReferences", BindingFlags.NonPublic | BindingFlags.Static);
-                if (field == null) return NeuterSucceeded = false;
-                field.SetValue(null, Array.Empty<string>());
+                FieldInfo? field = dts.GetField("implicitReferences", BindingFlags.NonPublic | BindingFlags.Static)
+                                ?? dts.GetField("ImplicitReferences", BindingFlags.NonPublic | BindingFlags.Static)
+                                ?? dts.GetField("_implicitReferences", BindingFlags.NonPublic | BindingFlags.Static);
+                if (field == null)
+                {
+                    NeuterFailureReason = "could not find implicitReferences field on DecompilerTypeSystem (loaded version may be different from 8.2)";
+                    failureReason = NeuterFailureReason;
+                    return NeuterSucceeded = false;
+                }
+                if (field.FieldType != typeof(string[]))
+                {
+                    NeuterFailureReason = "implicitReferences field has unexpected type " + field.FieldType.FullName + " (expected string[])";
+                    failureReason = NeuterFailureReason;
+                    return NeuterSucceeded = false;
+                }
+
+                // .NET Core 3.0+ blocks FieldInfo.SetValue on `static readonly` (initonly)
+                // fields with FieldAccessException. Emit a dynamic method that uses the
+                // `stsfld` opcode directly — the verifier skips initonly checks for
+                // dynamic methods when skipVisibility is true.
+                DynamicMethod method = new DynamicMethod(
+                    "RiderIlSpy_NeuterImplicitReferences",
+                    typeof(void),
+                    new[] { typeof(string[]) },
+                    typeof(IlSpyDecompiler),
+                    skipVisibility: true);
+                ILGenerator il = method.GetILGenerator();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Stsfld, field);
+                il.Emit(OpCodes.Ret);
+                Action<string[]> setter = (Action<string[]>)method.CreateDelegate(typeof(Action<string[]>));
+                setter(Array.Empty<string>());
+
                 NeuterSucceeded = true;
+                failureReason = null;
                 return true;
             }
-            catch
+            catch (System.Exception ex)
             {
+                NeuterFailureReason = ex.GetType().FullName + ": " + ex.Message;
+                failureReason = NeuterFailureReason;
                 return NeuterSucceeded = false;
             }
         }
@@ -145,6 +188,10 @@ public class IlSpyDecompiler
             sb.Append("// RiderIlSpy: C# decompile hit ICSharpCode.Decompiler's 2-component TFM\n");
             sb.Append("// bug (e.g. .NET 10's '.NETCoreApp,Version=v10.0') and the reflection\n");
             sb.Append("// workaround couldn't be applied. Falling back to IL disassembly.\n");
+            if (NeuterFailureReason != null)
+                sb.Append("// Neuter failure: ").Append(NeuterFailureReason).Append('\n');
+            if (retryFailure != null)
+                sb.Append("// Retry after neuter also threw: ").Append(retryFailure.GetType().FullName).Append(": ").Append(retryFailure.Message).Append('\n');
             sb.Append("//\n");
             sb.Append(il);
             return sb.ToString();
