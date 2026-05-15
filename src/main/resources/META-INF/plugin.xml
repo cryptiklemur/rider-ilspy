@@ -1,0 +1,22 @@
+<idea-plugin>
+    <id>com.cryptiklemur.riderilspy</id>
+    <name>Rider-ILSpy</name>
+    <vendor email="aaron@cryptiklemur.com" url="https://github.com/cryptiklemur">cryptiklemur</vendor>
+
+    <description><![CDATA[
+        Replaces Rider's built-in decompiler with ILSpy for assembly browsing,
+        goto-definition into external sources, and debug-data driven navigation.
+    ]]></description>
+
+    <depends>com.intellij.modules.rider</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationConfigurable instance="com.cryptiklemur.riderilspy.IlSpyOptionsPage"
+                                 id="RiderIlSpyOptionsPage"
+                                 displayName="ILSpy Decompiler"/>
+        <applicationService serviceImplementation="com.cryptiklemur.riderilspy.IlSpyFrontendSettings"/>
+        <statusBarWidgetFactory id="RiderIlSpy.ModeStatusBarWidget"
+                                implementation="com.cryptiklemur.riderilspy.IlSpyModeStatusBarWidgetFactory"
+                                order="last"/>
+    </extensions>
+</idea-plugin>
