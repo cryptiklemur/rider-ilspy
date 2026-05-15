@@ -13,8 +13,10 @@ import com.intellij.openapi.wm.StatusBar
 import com.intellij.openapi.wm.StatusBarWidget
 import com.intellij.openapi.wm.StatusBarWidgetFactory
 import com.intellij.openapi.wm.WindowManager
-import com.intellij.util.concurrency.AppExecutorUtil
-import java.util.concurrent.TimeUnit
+import java.io.File
+import java.nio.file.FileSystems
+import java.nio.file.StandardWatchEventKinds
+import java.nio.file.WatchService
 
 class IlSpyModeStatusBarWidgetFactory : StatusBarWidgetFactory {
     override fun getId(): String = WIDGET_ID
@@ -40,10 +42,12 @@ class IlSpyModeStatusBarWidget(private val project: Project) :
 
     override fun install(statusBar: StatusBar) {
         this.statusBar = statusBar
+        startReadySignalWatcher()
     }
 
     override fun dispose() {
         statusBar = null
+        stopReadySignalWatcher()
     }
 
     override fun getTooltipText(): String =
@@ -61,7 +65,7 @@ class IlSpyModeStatusBarWidget(private val project: Project) :
             override fun onChosen(selectedValue: IlSpyMode, finalChoice: Boolean): PopupStep<*>? {
                 if (selectedValue != current) {
                     IlSpyFrontendSettings.getInstance().mode = selectedValue
-                    scheduleRefreshOfOpenIlSpyFiles(project)
+                    refreshOpenIlSpyFilesNow()
                     refreshStatusBar()
                 }
                 return FINAL_CHOICE
@@ -75,22 +79,74 @@ class IlSpyModeStatusBarWidget(private val project: Project) :
         sb.updateWidget(ID())
     }
 
-    private fun scheduleRefreshOfOpenIlSpyFiles(project: Project) {
+    // No longer schedules multiple guess-the-deadline refreshes. The backend writes
+    // ~/.RiderIlSpy/ready.txt when its re-decompile pass completes and a WatchService
+    // (see startReadySignalWatcher) reacts with a single VFS refresh.
+    private fun refreshOpenIlSpyFilesNow() {
+        if (project.isDisposed) return
         val fem = FileEditorManager.getInstance(project)
         val targets: List<VirtualFile> = fem.openFiles.filter { isIlSpyDecompiledFile(it) }
         if (targets.isEmpty()) return
-        val executor = AppExecutorUtil.getAppScheduledExecutorService()
-        for (delayMs in longArrayOf(250L, 750L, 2000L)) {
-            executor.schedule({
-                ApplicationManager.getApplication().invokeLater {
-                    VfsUtil.markDirtyAndRefresh(true, false, false, *targets.toTypedArray())
-                }
-            }, delayMs, TimeUnit.MILLISECONDS)
+        ApplicationManager.getApplication().invokeLater {
+            if (!project.isDisposed) {
+                VfsUtil.markDirtyAndRefresh(true, false, false, *targets.toTypedArray())
+            }
         }
     }
 
     private fun isIlSpyDecompiledFile(file: VirtualFile): Boolean {
         val path = file.path
         return path.contains("/DecompilerCache/RiderIlSpy/") || path.contains("\\DecompilerCache\\RiderIlSpy\\")
+    }
+
+
+    private var watchService: WatchService? = null
+    private var watchThread: Thread? = null
+
+    private fun startReadySignalWatcher() {
+        try {
+            val dir = File(System.getProperty("user.home"), ".RiderIlSpy")
+            if (!dir.exists()) dir.mkdirs()
+            val ws = FileSystems.getDefault().newWatchService()
+            dir.toPath().register(
+                ws,
+                StandardWatchEventKinds.ENTRY_MODIFY,
+                StandardWatchEventKinds.ENTRY_CREATE,
+            )
+            watchService = ws
+            val thread = Thread({
+                try {
+                    while (!Thread.currentThread().isInterrupted) {
+                        val key = ws.take()
+                        var sawReady = false
+                        for (event in key.pollEvents()) {
+                            val ctx = event.context()
+                            if (ctx is java.nio.file.Path && ctx.fileName.toString() == "ready.txt") {
+                                sawReady = true
+                                break
+                            }
+                        }
+                        if (sawReady) refreshOpenIlSpyFilesNow()
+                        if (!key.reset()) break
+                    }
+                } catch (_: InterruptedException) {
+                    // shutting down
+                } catch (_: java.nio.file.ClosedWatchServiceException) {
+                    // shutting down
+                }
+            }, "RiderIlSpy-ready-watcher").apply { isDaemon = true }
+            watchThread = thread
+            thread.start()
+        } catch (_: Exception) {
+            // If we can't watch, mode flips will require the user to re-trigger navigation
+            // to see the new content. We log nothing here to keep the widget side quiet.
+        }
+    }
+
+    private fun stopReadySignalWatcher() {
+        try { watchService?.close() } catch (_: Exception) { /* ignore */ }
+        watchService = null
+        watchThread?.interrupt()
+        watchThread = null
     }
 }

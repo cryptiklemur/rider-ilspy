@@ -7,7 +7,9 @@ import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.util.xmlb.XmlSerializerUtil
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 @Service(Service.Level.APP)
 @State(name = "RiderIlSpyFrontendSettings", storages = [Storage("RiderIlSpy.xml")])
@@ -32,9 +34,21 @@ class IlSpyFrontendSettings : PersistentStateComponent<IlSpyFrontendSettings.Sta
 
     private fun writeSharedFile(value: IlSpyMode) {
         runCatching {
-            val path = sharedModeFile()
-            Files.createDirectories(path.parentFile.toPath())
-            path.writeText(value.backendName)
+            val target = sharedModeFile().toPath()
+            Files.createDirectories(target.parent)
+            // Write to a sibling tmp file then atomically rename it over the target.
+            // Plain `writeText` open-truncate-write leaves a window where readers see
+            // an empty file; ATOMIC_MOVE replaces the inode in one rename syscall and
+            // also overwrites any symlink at the destination rather than following it.
+            val tmp = target.resolveSibling("mode.txt.tmp")
+            Files.write(tmp, value.backendName.toByteArray(Charsets.UTF_8))
+            try {
+                Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            } catch (_: AtomicMoveNotSupportedException) {
+                // Filesystem (e.g. some FUSE mounts) doesn't support atomic moves; fall back
+                // to non-atomic replace. Still better than the original truncate-then-write.
+                Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING)
+            }
         }
     }
 
