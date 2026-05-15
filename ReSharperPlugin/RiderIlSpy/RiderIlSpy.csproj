@@ -21,7 +21,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="JetBrains.Rider.SDK" Version="2026.1.0-eap08" PrivateAssets="all" />
+    <PackageReference Include="JetBrains.Rider.SDK" Version="2026.1.1" PrivateAssets="all" />
     <!--
       Pinning System.Diagnostics.TraceSource 4.3.0 resolves an NU1107 version conflict:
       Castle.Core 4.4.1 (via JetBrains.Platform.Tests.Framework) requires >= 4.3.0,

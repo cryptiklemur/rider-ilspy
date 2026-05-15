@@ -56,8 +56,6 @@ The plugin has two halves:
 - **Kotlin frontend** (`src/main/kotlin/...`) — status-bar widget, persistent settings, options page. Writes the current mode to `~/.RiderIlSpy/mode.txt`.
 - **C# ReSharper backend** (`ReSharperPlugin/RiderIlSpy/...`) — registers an `IExternalSourcesProvider` so Rider's navigation pipeline routes through ILSpy. Watches the mode file via `FileSystemWatcher` and re-decompiles tracked types in place when the mode changes.
 
-Cross-process sync uses the shared file rather than RD protocol because rdgen is currently broken against Rider 2026.1 EAP.
-
 ## License
 
 MIT
