@@ -1,27 +1,25 @@
-name: Release
+name: Verify
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  release:
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: true
 
       - uses: actions/setup-java@v4
         with:
@@ -31,11 +29,6 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.x'
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
@@ -61,11 +54,10 @@ jobs:
       - name: verifyPlugin
         run: ./gradlew verifyPlugin --stacktrace
 
-      - name: Install release tooling
-        run: npm ci
-
-      - name: Run semantic-release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
-        run: npx semantic-release
+      - name: Upload verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-verifier-reports
+          path: build/reports/pluginVerifier
+          if-no-files-found: ignore

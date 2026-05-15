@@ -2,6 +2,7 @@ import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
 import org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask
+import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
 
 plugins {
     kotlin("jvm") version "2.2.0"
@@ -50,6 +51,20 @@ intellijPlatform {
 
     publishing {
         token = providers.environmentVariable("JETBRAINS_MARKETPLACE_TOKEN")
+    }
+
+    pluginVerification {
+        ides {
+            create(IntelliJPlatformType.Rider, platformVersion) {
+                useInstaller = false
+            }
+        }
+        failureLevel = listOf(
+            VerifyPluginTask.FailureLevel.COMPATIBILITY_PROBLEMS,
+            VerifyPluginTask.FailureLevel.INVALID_PLUGIN,
+            VerifyPluginTask.FailureLevel.MISSING_DEPENDENCIES,
+            VerifyPluginTask.FailureLevel.PLUGIN_STRUCTURE_WARNINGS,
+        )
     }
 }
 
