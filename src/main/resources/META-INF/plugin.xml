@@ -15,6 +15,7 @@
                                  id="RiderIlSpyOptionsPage"
                                  displayName="ILSpy Decompiler"/>
         <applicationService serviceImplementation="com.cryptiklemur.riderilspy.IlSpyFrontendSettings"/>
+        <projectService serviceImplementation="com.cryptiklemur.riderilspy.IlSpyProtocolHost"/>
         <statusBarWidgetFactory id="RiderIlSpy.ModeStatusBarWidget"
                                 implementation="com.cryptiklemur.riderilspy.IlSpyModeStatusBarWidgetFactory"
                                 order="last"/>

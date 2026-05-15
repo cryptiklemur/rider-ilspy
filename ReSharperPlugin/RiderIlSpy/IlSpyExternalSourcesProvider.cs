@@ -25,8 +25,10 @@ using JetBrains.ReSharper.Feature.Services.ExternalSources.Core;
 using JetBrains.ReSharper.Feature.Services.ExternalSources.Utils;
 using JetBrains.ReSharper.Feature.Services.Navigation;
 using JetBrains.ReSharper.Psi;
+using JetBrains.ReSharper.Feature.Services.Protocol;
 using JetBrains.Util;
 using JetBrains.Util.Logging;
+using RiderIlSpy.Model;
 
 namespace RiderIlSpy;
 
@@ -44,16 +46,17 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     private readonly ConcurrentDictionary<string, TypeDecompileEntry> myEntries = new ConcurrentDictionary<string, TypeDecompileEntry>();
     private readonly object myEntriesAccessLock = new object();
     private readonly LinkedList<string> myEntriesOrder = new LinkedList<string>();
-    private FileSystemWatcher? myWatcher;
+    private readonly RiderIlSpyModel myRiderIlSpyModel;
     private CancellationTokenSource? myActiveRedecompileCts;
     private readonly object myRedecompileLock = new object();
 
-    public IlSpyExternalSourcesProvider(Lifetime lifetime, ISettingsStore settingsStore, INavigationDecompilationCache cache, IlSpyDecompiler decompiler)
+    public IlSpyExternalSourcesProvider(Lifetime lifetime, ISolution solution, ISettingsStore settingsStore, INavigationDecompilationCache cache, IlSpyDecompiler decompiler)
     {
         myCache = cache;
         myDecompiler = decompiler;
         mySettings = settingsStore.BindToContextLive(lifetime, ContextRange.ApplicationWide);
-        SetupModeWatcher(lifetime);
+        myRiderIlSpyModel = solution.GetProtocolSolution().GetRiderIlSpyModel();
+        myRiderIlSpyModel.Mode.Advise(lifetime, OnRiderIlSpyModeChanged);
     }
 
     public string PresentableShortName => "ILSpy";
@@ -208,7 +211,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             string fullName = clrName.FullName;
             if (string.IsNullOrEmpty(fullName)) return null;
 
-            IlSpyOutputMode mode = ReadSharedModeOverride() ?? mySettings.GetValue((IlSpySettings s) => s.OutputMode);
+            IlSpyOutputMode mode = ReadRdMode() ?? mySettings.GetValue((IlSpySettings s) => s.OutputMode);
             string moniker = MonikerUtil.GetTypeCacheMoniker(top);
             string fileName = (top.ShortName ?? "Decompiled") + ".cs";
             IDictionary<string, string> properties = new Dictionary<string, string>();
@@ -356,90 +359,23 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         }
     }
 
-    private static IlSpyOutputMode? ReadSharedModeOverride()
+    private IlSpyOutputMode? ReadRdMode()
     {
-        try
+        string? current = myRiderIlSpyModel.Mode.Value;
+        if (string.IsNullOrEmpty(current)) return null;
+        return current switch
         {
-            string home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (string.IsNullOrEmpty(home)) return null;
-            string path = Path.Combine(home, ".RiderIlSpy", "mode.txt");
-            if (!File.Exists(path)) return null;
-            // Retry briefly: the writer may be mid-truncate-and-write; ATOMIC_MOVE on the
-            // Kotlin side avoids this but the file can still be momentarily empty under
-            // races against editor save events.
-            string content = string.Empty;
-            for (int attempt = 0; attempt < 5; attempt++)
-            {
-                try { content = File.ReadAllText(path).Trim(); }
-                catch (IOException) { content = string.Empty; }
-                if (content.Length > 0) break;
-                Thread.Sleep(20);
-            }
-            return content switch
-            {
-                "CSharp" => IlSpyOutputMode.CSharp,
-                "IL" => IlSpyOutputMode.IL,
-                "CSharpWithIL" => IlSpyOutputMode.CSharpWithIL,
-                _ => null,
-            };
-        }
-        catch
-        {
-            return null;
-        }
+            "CSharp" => IlSpyOutputMode.CSharp,
+            "IL" => IlSpyOutputMode.IL,
+            "CSharpWithIL" => IlSpyOutputMode.CSharpWithIL,
+            _ => null,
+        };
     }
 
-    private void SetupModeWatcher(Lifetime lifetime)
+    private void OnRiderIlSpyModeChanged(string? newMode)
     {
-        try
-        {
-            string home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (string.IsNullOrEmpty(home))
-            {
-                ourLogger.Warn("RiderIlSpy.SetupModeWatcher: HOME / user profile env not set; mode changes will not auto-refresh");
-                return;
-            }
-            string dir = Path.Combine(home, ".RiderIlSpy");
-            Directory.CreateDirectory(dir);
-            FileSystemWatcher watcher = new FileSystemWatcher(dir, "mode.txt")
-            {
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.CreationTime | NotifyFilters.FileName | NotifyFilters.Size,
-            };
-            watcher.Changed += OnModeFileChanged;
-            watcher.Created += OnModeFileChanged;
-            watcher.Renamed += OnModeFileChanged;
-            watcher.Error += (_, errArgs) =>
-            {
-                Exception? err = errArgs.GetException();
-                ourLogger.Warn("RiderIlSpy.SetupModeWatcher: FileSystemWatcher error{0}; mode changes may stop refreshing until Rider restarts. If on Linux check `sysctl fs.inotify.max_user_watches`", err == null ? string.Empty : ": " + err.Message);
-            };
-            watcher.EnableRaisingEvents = true;
-            myWatcher = watcher;
-            lifetime.OnTermination(() =>
-            {
-                try
-                {
-                    watcher.EnableRaisingEvents = false;
-                    watcher.Dispose();
-                }
-                catch (ObjectDisposedException)
-                {
-                    // already disposed by another termination path — expected race during shutdown
-                }
-                catch (Exception ex)
-                {
-                    ourLogger.Verbose("RiderIlSpy.SetupModeWatcher: ignoring shutdown disposal error {0}: {1}", ex.GetType().Name, ex.Message);
-                }
-            });
-        }
-        catch (Exception ex)
-        {
-            ourLogger.Warn("RiderIlSpy.SetupModeWatcher failed to install watcher; falling back to per-navigation mode read. Mode changes will not auto-refresh already-open editors. {0}: {1}", ex.GetType().Name, ex.Message);
-        }
-    }
+        if (string.IsNullOrEmpty(newMode)) return;
 
-    private void OnModeFileChanged(object sender, FileSystemEventArgs e)
-    {
         CancellationTokenSource newCts = new CancellationTokenSource();
         CancellationTokenSource? previous;
         lock (myRedecompileLock)
@@ -470,13 +406,13 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             {
                 await Task.Delay(75, newCts.Token).ConfigureAwait(false);
                 RedecompileAllEntries(newCts.Token);
-                WriteReadySignal();
+                myRiderIlSpyModel.ReadyTick.Fire(DateTime.UtcNow.Ticks);
             }
             catch (OperationCanceledException)
             {
-                // Superseded by a newer mode change; the next OnModeFileChanged will redrive the redecompile.
+                // Superseded by a newer mode change; the next OnRiderIlSpyModeChanged will redrive the redecompile.
                 // Logging at Verbose only — frequent during rapid mode toggles, not actionable.
-                ourLogger.Verbose("RiderIlSpy.OnModeFileChanged: redecompile cancelled by newer mode change");
+                ourLogger.Verbose("RiderIlSpy.OnRiderIlSpyModeChanged: redecompile cancelled by newer mode change");
             }
             catch (Exception ex)
             {
@@ -501,37 +437,11 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         });
     }
 
-    private static void WriteReadySignal()
-    {
-        try
-        {
-            string home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (string.IsNullOrEmpty(home)) return;
-            string dir = Path.Combine(home, ".RiderIlSpy");
-            Directory.CreateDirectory(dir);
-            string path = Path.Combine(dir, "ready.txt");
-            string tmp = path + ".tmp";
-            // counter monotonically increments so file watchers always see size/lastwrite change
-            long ticks = DateTime.UtcNow.Ticks;
-            File.WriteAllText(tmp, ticks.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            try { File.Move(tmp, path, overwrite: true); }
-            catch (PlatformNotSupportedException)
-            {
-                if (File.Exists(path)) File.Delete(path);
-                File.Move(tmp, path);
-            }
-        }
-        catch (Exception ex)
-        {
-            ourLogger.Error(ex, "RiderIlSpy.WriteReadySignal failed");
-        }
-    }
-
     private void RedecompileAllEntries(CancellationToken cancellationToken)
     {
         if (myEntries.IsEmpty) return;
 
-        IlSpyOutputMode mode = ReadSharedModeOverride() ?? mySettings.GetValue((IlSpySettings s) => s.OutputMode);
+        IlSpyOutputMode mode = ReadRdMode() ?? mySettings.GetValue((IlSpySettings s) => s.OutputMode);
         DecompilerSettings decompilerSettings = BuildDecompilerSettings();
         IReadOnlyList<string> extraSearchDirs = GetExtraSearchDirs();
         bool showBanner = mySettings.GetValue((IlSpySettings s) => s.ShowDiagnosticBanner);

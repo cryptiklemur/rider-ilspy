@@ -1,11 +1,18 @@
+import org.jetbrains.intellij.platform.gradle.Constants
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
 import org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
 
+val rdKotlinVersion: String by project
+
 plugins {
-    kotlin("jvm") version "2.2.0"
+    // Match the Kotlin version of rider-model.jar bundled with Rider 2026.1.1
+    // (metadata [2,3,0]). The :protocol subproject's DSL extends classes from
+    // that jar, so producing both sides with the same compiler avoids
+    // "incompatible Kotlin metadata" failures at rd-gen time.
+    kotlin("jvm") version "2.3.0"
     id("org.jetbrains.intellij.platform") version "2.16.0"
 }
 
@@ -85,6 +92,40 @@ intellijPlatform {
             VerifyPluginTask.FailureLevel.PLUGIN_STRUCTURE_WARNINGS,
         )
     }
+}
+
+// Expose Rider's bundled rider-model.jar as a published Configuration so the
+// :protocol subproject can consume it without having to know the on-disk path
+// to the resolved Rider SDK. INITIALIZE_INTELLIJ_PLATFORM_PLUGIN is the task
+// that resolves intellijPlatform.platformPath, so we wire that as the producer.
+val riderModel: Configuration by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+
+artifacts {
+    add(riderModel.name, provider {
+        intellijPlatform.platformPath.resolve("lib/rd/rider-model.jar").also {
+            check(it.toFile().isFile) {
+                "rider-model.jar is not found at ${it.toAbsolutePath()}"
+            }
+        }.toFile()
+    }) {
+        builtBy(Constants.Tasks.INITIALIZE_INTELLIJ_PLATFORM_PLUGIN)
+    }
+}
+
+// Source dir for rd-gen kotlin output. The :protocol subproject writes to this
+// path (see protocol/build.gradle.kts), so adding it here makes the generated
+// model classes visible to the main plugin compile.
+sourceSets {
+    main {
+        kotlin.srcDir(layout.projectDirectory.dir("src/main/rdgen/kotlin"))
+    }
+}
+
+tasks.named("compileKotlin") {
+    dependsOn(":protocol:rdgen")
 }
 
 val dotNetSrcDir = layout.projectDirectory.dir("ReSharperPlugin")
