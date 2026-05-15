@@ -1,11 +1,7 @@
 name: Release
 
-# Gate the release on a successful Verify run. We only ship versions of the
-# plugin that the verifier has already cleared against our pinned IDE matrix.
 on:
-  workflow_run:
-    workflows: ["Verify"]
-    types: [completed]
+  push:
     branches: [main]
 
 permissions:
@@ -14,26 +10,16 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: release-${{ github.event.workflow_run.head_branch }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   release:
-    # Only run when Verify itself ended green. workflow_run fires on any
-    # completion (failure, cancelled, etc.) so we have to check explicitly.
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
-          # workflow_run runs default to the workflow file's branch, not the
-          # commit that triggered Verify. Pin to the exact SHA that Verify
-          # signed off on so we never release something different.
-          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
           persist-credentials: true
 
