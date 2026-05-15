@@ -55,7 +55,19 @@ intellijPlatform {
 
     pluginVerification {
         ides {
-            create(IntelliJPlatformType.Rider, platformVersion) {
+            // current stable major (our build target)
+            create(IntelliJPlatformType.Rider, "2026.1.1") {
+                useInstaller = false
+            }
+            // prior stable major
+            create(IntelliJPlatformType.Rider, "2025.3.4.1") {
+                useInstaller = false
+            }
+            // current EAP cycle — pinned EAP1 + rolling latest of the 2026.2 dev line
+            create(IntelliJPlatformType.Rider, "2026.2-EAP1-SNAPSHOT") {
+                useInstaller = false
+            }
+            create(IntelliJPlatformType.Rider, "2026.2-SNAPSHOT") {
                 useInstaller = false
             }
         }
