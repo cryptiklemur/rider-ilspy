@@ -54,9 +54,50 @@ public class IlSpyDecompiler
                     return DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs);
             }
         }
+        catch (ArgumentException ex) when (mode != IlSpyOutputMode.IL && IsTwoComponentTfmVersionBug(ex))
+        {
+            return FallBackToIl(assemblyPath, typeFullName, settings, extraSearchDirs, ex);
+        }
         catch (System.Exception ex)
         {
             return FormatDecompileFailure(typeFullName, ex);
+        }
+    }
+
+    // Detects ILSpy bug in DecompilerTypeSystem.InitializeAsync: when the assembly's
+    // TargetFramework attribute parses to a 2-component Version (e.g. ".NETCoreApp,Version=v9.0"
+    // or ".NETStandard,Version=v2.0"), ILSpy calls `version.ToString(3)` to format implicit
+    // references, which throws ArgumentException with paramName="fieldCount".
+    //
+    // Present in 8.2, 9.1, 10.0 — never been fixed upstream. CSharp and CSharpWithIL modes
+    // both go through DecompilerTypeSystem. IL-only mode uses ReflectionDisassembler and
+    // skips this entire codepath, so it always works.
+    private static bool IsTwoComponentTfmVersionBug(ArgumentException ex)
+    {
+        if (ex.ParamName != "fieldCount") return false;
+        string? trace = ex.StackTrace;
+        return trace != null && trace.Contains("DecompilerTypeSystem");
+    }
+
+    private string FallBackToIl(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs, ArgumentException original)
+    {
+        try
+        {
+            string il = DisassembleToIl(assemblyPath, typeFullName, settings, extraSearchDirs);
+            StringBuilder sb = new StringBuilder();
+            sb.Append("// RiderIlSpy: C# decompile hit a known ICSharpCode.Decompiler bug\n");
+            sb.Append("// (DecompilerTypeSystem calls Version.ToString(3) on a 2-component TFM\n");
+            sb.Append("// like \".NETCoreApp,Version=v9.0\" - present in 8.2, 9.x, and 10.x).\n");
+            sb.Append("// Falling back to IL disassembly for ").Append(typeFullName).Append(".\n");
+            sb.Append("//\n");
+            sb.Append(il);
+            return sb.ToString();
+        }
+        catch (System.Exception fallbackEx)
+        {
+            return FormatDecompileFailure(typeFullName, original) +
+                   "\n// IL fallback also failed:\n" +
+                   FormatDecompileFailure(typeFullName, fallbackEx);
         }
     }
 
