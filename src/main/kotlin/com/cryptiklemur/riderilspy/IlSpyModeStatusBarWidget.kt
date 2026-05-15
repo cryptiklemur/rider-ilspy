@@ -3,8 +3,8 @@ package com.cryptiklemur.riderilspy
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.popup.JBPopup
 import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.openapi.ui.popup.ListPopup
 import com.intellij.openapi.ui.popup.PopupStep
 import com.intellij.openapi.ui.popup.util.BaseListPopupStep
 import com.intellij.openapi.vfs.VfsUtil
@@ -13,9 +13,7 @@ import com.intellij.openapi.wm.StatusBar
 import com.intellij.openapi.wm.StatusBarWidget
 import com.intellij.openapi.wm.StatusBarWidgetFactory
 import com.intellij.openapi.wm.WindowManager
-import com.intellij.util.Consumer
 import com.intellij.util.concurrency.AppExecutorUtil
-import java.awt.event.MouseEvent
 import java.util.concurrent.TimeUnit
 
 class IlSpyModeStatusBarWidgetFactory : StatusBarWidgetFactory {
@@ -51,14 +49,10 @@ class IlSpyModeStatusBarWidget(private val project: Project) :
     override fun getTooltipText(): String =
         "ILSpy decompiler output mode. Click to switch — affects subsequent decompiles."
 
-    @Suppress("OVERRIDE_DEPRECATION")
-    override fun getClickConsumer(): Consumer<MouseEvent>? = null
-
     override fun getSelectedValue(): String =
         "ILSpy: ${IlSpyFrontendSettings.getInstance().mode.displayName}"
 
-    @Suppress("OVERRIDE_DEPRECATION")
-    override fun getPopupStep(): ListPopup {
+    override fun getPopup(): JBPopup {
         val current = IlSpyFrontendSettings.getInstance().mode
         val step = object : BaseListPopupStep<IlSpyMode>("ILSpy Mode", IlSpyMode.entries.toList()) {
             override fun getTextFor(value: IlSpyMode): String =
