@@ -22,6 +22,12 @@
 
   <ItemGroup>
     <PackageReference Include="JetBrains.Rider.SDK" Version="2026.1.0-eap08" PrivateAssets="all" />
+    <!--
+      Pinning System.Diagnostics.TraceSource 4.3.0 resolves an NU1107 version conflict:
+      Castle.Core 4.4.1 (via JetBrains.Platform.Tests.Framework) requires >= 4.3.0,
+      while JetBrains.Rider.External.Iis pins it to == 4.0.0. Without this pin,
+      `dotnet restore` fails. Do not remove without first updating the transitive deps.
+    -->
     <PackageReference Include="System.Diagnostics.TraceSource" Version="4.3.0" />
     <PackageReference Include="ICSharpCode.Decompiler" Version="8.2.0.7535" />
   </ItemGroup>

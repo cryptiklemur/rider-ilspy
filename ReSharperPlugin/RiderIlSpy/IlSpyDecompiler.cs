@@ -1,7 +1,10 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.CSharp;
@@ -11,6 +14,28 @@ using ICSharpCode.Decompiler.TypeSystem;
 using JetBrains.Application;
 
 namespace RiderIlSpy;
+
+/// <summary>
+/// Identity metadata read directly from an assembly's CLI header — used by the
+/// diagnostic banner. Mirrors the fields surfaced by the JetBrains decompiler banner
+/// (Assembly identity, MVID, target framework, file size).
+/// </summary>
+/// <param name="Name">Simple assembly name (no version, no culture suffix).</param>
+/// <param name="Version">Four-part assembly version string.</param>
+/// <param name="Culture">Culture name; "neutral" when unset.</param>
+/// <param name="PublicKeyToken">Lowercase hex token computed from the SHA1 of the
+/// public key per ECMA-335 II.6.3, or "null" for unsigned assemblies.</param>
+/// <param name="Mvid">Module Version Id, uppercased "D" Guid format.</param>
+/// <param name="FileSize">Length of the PE file on disk, in bytes; 0 if unreadable.</param>
+/// <param name="TargetFramework">TFM moniker (e.g. ".NETCoreApp,Version=v8.0"); "unknown" if absent.</param>
+public sealed record AssemblyBannerMetadata(
+    string Name,
+    string Version,
+    string Culture,
+    string PublicKeyToken,
+    string Mvid,
+    long FileSize,
+    string TargetFramework);
 
 [ShellComponent]
 public class IlSpyDecompiler
@@ -42,6 +67,60 @@ public class IlSpyDecompiler
         UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, effective, extraSearchDirs);
         CSharpDecompiler decompiler = new CSharpDecompiler(module, resolver, effective);
         return decompiler.DecompileModuleAndAssemblyAttributesToString();
+    }
+
+    /// <summary>
+    /// Reads identity metadata from a PE/CLI assembly without loading it into the
+    /// AppDomain. Returns null when the file is unreadable or not a managed assembly.
+    /// Used by the diagnostic banner to mirror the JetBrains decompiler's
+    /// `// Assembly: ... // MVID: ...` header.
+    /// </summary>
+    public AssemblyBannerMetadata? GetAssemblyBannerMetadata(string assemblyPath)
+    {
+        try
+        {
+            using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchMetadata, MetadataReaderOptions.Default);
+            MetadataReader metadata = module.Metadata;
+            if (!metadata.IsAssembly) return null;
+
+            AssemblyDefinition def = metadata.GetAssemblyDefinition();
+            string name = metadata.GetString(def.Name);
+            string version = def.Version?.ToString() ?? "0.0.0.0";
+            string culture = metadata.GetString(def.Culture);
+            if (string.IsNullOrEmpty(culture)) culture = "neutral";
+
+            byte[] publicKey = def.PublicKey.IsNil ? System.Array.Empty<byte>() : metadata.GetBlobBytes(def.PublicKey);
+            string publicKeyToken = publicKey.Length == 0
+                ? "null"
+                : ComputePublicKeyToken(publicKey);
+
+            ModuleDefinition modDef = metadata.GetModuleDefinition();
+            string mvid = metadata.GetGuid(modDef.Mvid).ToString("D").ToUpperInvariant();
+
+            long fileSize = 0L;
+            try { fileSize = new FileInfo(assemblyPath).Length; } catch { /* unreadable size is non-fatal */ }
+
+            string targetFramework = "unknown";
+            try { targetFramework = module.DetectTargetFrameworkId() ?? "unknown"; } catch { /* missing TFM is non-fatal */ }
+
+            return new AssemblyBannerMetadata(name, version, culture, publicKeyToken, mvid, fileSize, targetFramework);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // ECMA-335 II.6.3: the public key token is the last 8 bytes of the SHA1 hash of
+    // the public key, in reverse order. Strong-named assemblies store the full key in
+    // the AssemblyDef row; unsigned assemblies store nothing.
+    private static string ComputePublicKeyToken(byte[] publicKey)
+    {
+        using SHA1 sha = SHA1.Create();
+        byte[] hash = sha.ComputeHash(publicKey);
+        StringBuilder sb = new StringBuilder(16);
+        for (int i = 0; i < 8; i++) sb.Append(hash[hash.Length - 1 - i].ToString("x2"));
+        return sb.ToString();
     }
 
     private static string DecompileToCSharp(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs)

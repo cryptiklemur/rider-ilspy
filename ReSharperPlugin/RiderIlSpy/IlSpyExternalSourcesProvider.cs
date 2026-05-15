@@ -2,11 +2,15 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ICSharpCode.Decompiler;
+using ICSharpCode.Decompiler.CSharp;
 using JetBrains.Application.Parts;
 using JetBrains.Application.Progress;
 using JetBrains.Application.Settings;
@@ -240,8 +244,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
 
             if (showBanner)
             {
-                string banner = "// RiderIlSpy: " + RedactHome(assemblyFile.FullPath) + "\n// extra search dirs: " + (extraSearchDirs.Count == 0 ? "(none)" : string.Join(", ", extraSearchDirs.Select(RedactHome))) + "\n\n";
-                content = banner + content;
+                content = BuildDiagnosticBanner(assemblyFile.FullPath, fullName, mode, extraSearchDirs) + content;
             }
             properties["RiderIlSpy.Mode"] = mode.ToString();
             properties["RiderIlSpy.Assembly"] = assemblyFile.FullPath;
@@ -290,6 +293,67 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         if (path.StartsWith(home, StringComparison.OrdinalIgnoreCase))
             return "~" + path.Substring(home.Length);
         return path;
+    }
+
+    // Mirrors the JetBrains decompiler banner shape so output is visually familiar:
+    //   // Decompiled with RiderIlSpy (ICSharpCode.Decompiler 8.2.0)
+    //   // Type: <fqn>
+    //   // Assembly: <name>, Version=<v>, Culture=<c>, PublicKeyToken=<t>
+    //   // MVID: <guid>
+    //   // Target framework: <tfm>
+    //   // File size: <bytes>
+    //   // Assembly location: <redacted path>
+    //   // XML documentation location: <path or (none)>
+    //   // Mode: <CSharp|IL|CSharpWithIL>
+    //   // Extra search dirs: <(none) or comma list>
+    // Reading metadata is best-effort: if it fails we still emit the path/mode rows so
+    // the banner remains useful (e.g. for diagnosing assembly resolution).
+    private string BuildDiagnosticBanner(string assemblyPath, string typeFullName, IlSpyOutputMode mode, IReadOnlyList<string> extraSearchDirs)
+    {
+        AssemblyBannerMetadata? meta = myDecompiler.GetAssemblyBannerMetadata(assemblyPath);
+        string xmlDocPath = SafeXmlDocPath(assemblyPath);
+        bool xmlExists = !string.IsNullOrEmpty(xmlDocPath) && File.Exists(xmlDocPath);
+
+        StringBuilder sb = new StringBuilder(512);
+        sb.Append("// Decompiled with RiderIlSpy (ICSharpCode.Decompiler ").Append(GetDecompilerVersion()).Append(")\n");
+        sb.Append("// Type: ").Append(typeFullName).Append('\n');
+        if (meta != null)
+        {
+            sb.Append("// Assembly: ").Append(meta.Name)
+              .Append(", Version=").Append(meta.Version)
+              .Append(", Culture=").Append(meta.Culture)
+              .Append(", PublicKeyToken=").Append(meta.PublicKeyToken).Append('\n');
+            sb.Append("// MVID: ").Append(meta.Mvid).Append('\n');
+            sb.Append("// Target framework: ").Append(meta.TargetFramework).Append('\n');
+            sb.Append("// File size: ").Append(meta.FileSize.ToString("N0", CultureInfo.InvariantCulture)).Append(" bytes\n");
+        }
+        sb.Append("// Assembly location: ").Append(RedactHome(assemblyPath)).Append('\n');
+        sb.Append("// XML documentation location: ").Append(xmlExists ? RedactHome(xmlDocPath) : "(none)").Append('\n');
+        sb.Append("// Mode: ").Append(mode).Append('\n');
+        sb.Append("// Extra search dirs: ")
+          .Append(extraSearchDirs.Count == 0 ? "(none)" : string.Join(", ", extraSearchDirs.Select(RedactHome)))
+          .Append("\n\n");
+        return sb.ToString();
+    }
+
+    private static string SafeXmlDocPath(string assemblyPath)
+    {
+        if (string.IsNullOrEmpty(assemblyPath)) return string.Empty;
+        try { return Path.ChangeExtension(assemblyPath, ".xml"); }
+        catch { return string.Empty; }
+    }
+
+    private static string GetDecompilerVersion()
+    {
+        try
+        {
+            Version? v = typeof(CSharpDecompiler).Assembly.GetName().Version;
+            return v?.ToString(3) ?? "unknown";
+        }
+        catch
+        {
+            return "unknown";
+        }
     }
 
     private static IlSpyOutputMode? ReadSharedModeOverride()
@@ -353,7 +417,19 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             myWatcher = watcher;
             lifetime.OnTermination(() =>
             {
-                try { watcher.EnableRaisingEvents = false; watcher.Dispose(); } catch { /* ignore */ }
+                try
+                {
+                    watcher.EnableRaisingEvents = false;
+                    watcher.Dispose();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // already disposed by another termination path — expected race during shutdown
+                }
+                catch (Exception ex)
+                {
+                    ourLogger.Verbose("RiderIlSpy.SetupModeWatcher: ignoring shutdown disposal error {0}: {1}", ex.GetType().Name, ex.Message);
+                }
             });
         }
         catch (Exception ex)
@@ -371,8 +447,22 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             previous = myActiveRedecompileCts;
             myActiveRedecompileCts = newCts;
         }
-        try { previous?.Cancel(); } catch { /* ignore */ }
-        try { previous?.Dispose(); } catch { /* ignore */ }
+        try
+        {
+            previous?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // previous CTS already disposed by its own task's finally — expected race
+        }
+        try
+        {
+            previous?.Dispose();
+        }
+        catch (ObjectDisposedException)
+        {
+            // already disposed by its task's finally — expected race
+        }
 
         _ = Task.Run(async () =>
         {
@@ -384,7 +474,9 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             }
             catch (OperationCanceledException)
             {
-                // superseded by a newer mode change; do nothing
+                // Superseded by a newer mode change; the next OnModeFileChanged will redrive the redecompile.
+                // Logging at Verbose only — frequent during rapid mode toggles, not actionable.
+                ourLogger.Verbose("RiderIlSpy.OnModeFileChanged: redecompile cancelled by newer mode change");
             }
             catch (Exception ex)
             {
@@ -397,7 +489,14 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
                     if (ReferenceEquals(myActiveRedecompileCts, newCts))
                         myActiveRedecompileCts = null;
                 }
-                try { newCts.Dispose(); } catch { /* ignore */ }
+                try
+                {
+                    newCts.Dispose();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // already disposed by a concurrent cancel-and-swap path — expected race
+                }
             }
         });
     }
@@ -455,8 +554,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
 
                 if (showBanner)
                 {
-                    string banner = "// RiderIlSpy: " + RedactHome(entry.AssemblyFilePath) + "\n// extra search dirs: " + (extraSearchDirs.Count == 0 ? "(none)" : string.Join(", ", extraSearchDirs.Select(RedactHome))) + "\n\n";
-                    content = banner + content;
+                    content = BuildDiagnosticBanner(entry.AssemblyFilePath, entry.TypeFullName, mode, extraSearchDirs) + content;
                 }
 
                 IDictionary<string, string> properties = new Dictionary<string, string>
