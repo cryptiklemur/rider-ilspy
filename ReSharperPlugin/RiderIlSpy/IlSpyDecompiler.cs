@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
@@ -54,13 +55,69 @@ public class IlSpyDecompiler
                     return DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs);
             }
         }
+        catch (ArgumentException ex) when (mode != IlSpyOutputMode.IL && IsTwoComponentTfmVersionBug(ex) && NeuterImplicitReferences())
+        {
+            // The reflection patch above made the buggy foreach a no-op. Retry the original
+            // mode and return real C# (or C# + IL) output.
+            try
+            {
+                switch (mode)
+                {
+                    case IlSpyOutputMode.CSharpWithIL:
+                        return DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs);
+                    default:
+                        return DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs);
+                }
+            }
+            catch (System.Exception retryEx)
+            {
+                return FallBackToIl(assemblyPath, typeFullName, settings, extraSearchDirs, ex, retryEx);
+            }
+        }
         catch (ArgumentException ex) when (mode != IlSpyOutputMode.IL && IsTwoComponentTfmVersionBug(ex))
         {
-            return FallBackToIl(assemblyPath, typeFullName, settings, extraSearchDirs, ex);
+            // NeuterImplicitReferences returned false (reflection patch failed). Fall back to IL.
+            return FallBackToIl(assemblyPath, typeFullName, settings, extraSearchDirs, ex, null);
         }
         catch (System.Exception ex)
         {
             return FormatDecompileFailure(typeFullName, ex);
+        }
+    }
+
+    // ILSpy's `DecompilerTypeSystem.implicitReferences` is a `static readonly string[]`
+    // containing the two assemblies (`System.Runtime.InteropServices` and
+    // `System.Runtime.CompilerServices.Unsafe`) that ILSpy tries to inject as implicit
+    // references on every .NET Core/.NET 5+ decompile. The injection code calls
+    // `tfmVersion.ToString(3)` unconditionally, which throws on .NET 10+ assemblies
+    // because `ParseTargetFramework` only pads 2-component versions when the string is
+    // exactly 3 chars long (so `v9.0` → padded, `v10.0` → not padded).
+    //
+    // Swapping the static field to an empty array makes the buggy foreach a no-op for
+    // every subsequent decompile in this process. If the type actually needs those
+    // assemblies, they're already in its own AssemblyRef table and get resolved normally.
+    private static readonly object NeuterLock = new object();
+    private static bool NeuterAttempted;
+    private static bool NeuterSucceeded;
+    private static bool NeuterImplicitReferences()
+    {
+        lock (NeuterLock)
+        {
+            if (NeuterAttempted) return NeuterSucceeded;
+            NeuterAttempted = true;
+            try
+            {
+                Type dts = typeof(DecompilerTypeSystem);
+                FieldInfo? field = dts.GetField("implicitReferences", BindingFlags.NonPublic | BindingFlags.Static);
+                if (field == null) return NeuterSucceeded = false;
+                field.SetValue(null, Array.Empty<string>());
+                NeuterSucceeded = true;
+                return true;
+            }
+            catch
+            {
+                return NeuterSucceeded = false;
+            }
         }
     }
 
@@ -79,25 +136,27 @@ public class IlSpyDecompiler
         return trace != null && trace.Contains("DecompilerTypeSystem");
     }
 
-    private string FallBackToIl(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs, ArgumentException original)
+    private string FallBackToIl(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs, ArgumentException original, System.Exception? retryFailure)
     {
         try
         {
             string il = DisassembleToIl(assemblyPath, typeFullName, settings, extraSearchDirs);
             StringBuilder sb = new StringBuilder();
-            sb.Append("// RiderIlSpy: C# decompile hit a known ICSharpCode.Decompiler bug\n");
-            sb.Append("// (DecompilerTypeSystem calls Version.ToString(3) on a 2-component TFM\n");
-            sb.Append("// like \".NETCoreApp,Version=v9.0\" - present in 8.2, 9.x, and 10.x).\n");
-            sb.Append("// Falling back to IL disassembly for ").Append(typeFullName).Append(".\n");
+            sb.Append("// RiderIlSpy: C# decompile hit ICSharpCode.Decompiler's 2-component TFM\n");
+            sb.Append("// bug (e.g. .NET 10's '.NETCoreApp,Version=v10.0') and the reflection\n");
+            sb.Append("// workaround couldn't be applied. Falling back to IL disassembly.\n");
             sb.Append("//\n");
             sb.Append(il);
             return sb.ToString();
         }
         catch (System.Exception fallbackEx)
         {
-            return FormatDecompileFailure(typeFullName, original) +
-                   "\n// IL fallback also failed:\n" +
-                   FormatDecompileFailure(typeFullName, fallbackEx);
+            string body = FormatDecompileFailure(typeFullName, original);
+            if (retryFailure != null)
+                body += "\n// CSharp retry after neutering implicit refs also failed:\n" +
+                        FormatDecompileFailure(typeFullName, retryFailure);
+            body += "\n// IL fallback also failed:\n" + FormatDecompileFailure(typeFullName, fallbackEx);
+            return body;
         }
     }
 
