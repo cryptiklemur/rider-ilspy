@@ -5,6 +5,7 @@ import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.util.xmlb.XmlSerializerUtil
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
@@ -25,6 +26,17 @@ class IlSpyFrontendSettings : PersistentStateComponent<IlSpyFrontendSettings.Sta
         XmlSerializerUtil.copyBean(state, internalState)
     }
 
+    /**
+     * The active ILSpy decompiler output mode.
+     *
+     * Reading returns the persisted mode (or [IlSpyMode.CSharp] if the persisted
+     * identifier is unknown). Writing has two side effects: it mutates the in-memory
+     * [State] and synchronously writes the chosen [IlSpyMode.backendName] to
+     * [sharedModeFile] so the C# backend can pick it up. Filesystem failures on that
+     * write are logged via [Logger] (see [writeSharedFile]) but are intentionally not
+     * propagated — the in-memory toggle still succeeds, and the IDE is the source of
+     * truth on the next backend roundtrip.
+     */
     var mode: IlSpyMode
         get() = IlSpyMode.fromBackendName(internalState.mode)
         set(value) {
@@ -49,14 +61,29 @@ class IlSpyFrontendSettings : PersistentStateComponent<IlSpyFrontendSettings.Sta
                 // to non-atomic replace. Still better than the original truncate-then-write.
                 Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING)
             }
+        }.onFailure { error ->
+            // In-memory state is updated, but the C# backend reads from this file —
+            // surfacing the cause helps users understand why a mode toggle "did nothing".
+            Logger.getInstance(IlSpyFrontendSettings::class.java)
+                .warn("Failed to write shared mode file at ${sharedModeFile().path}", error)
         }
     }
 
     companion object {
+        // Cross-process channel with the C# backend. The directory and filenames are
+        // mirrored on the C# side (RiderIlSpy backend); any change here must mirror there.
+        const val SHARED_DIR_NAME: String = ".RiderIlSpy"
+        const val MODE_FILE_NAME: String = "mode.txt"
+        const val READY_FILE_NAME: String = "ready.txt"
+
         fun getInstance(): IlSpyFrontendSettings =
             ApplicationManager.getApplication().getService(IlSpyFrontendSettings::class.java)
 
-        fun sharedModeFile(): File =
-            File(System.getProperty("user.home"), ".RiderIlSpy/mode.txt")
+        fun sharedDir(): File =
+            File(System.getProperty("user.home"), SHARED_DIR_NAME)
+
+        fun sharedModeFile(): File = File(sharedDir(), MODE_FILE_NAME)
+
+        fun sharedReadyFile(): File = File(sharedDir(), READY_FILE_NAME)
     }
 }

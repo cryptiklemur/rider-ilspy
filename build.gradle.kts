@@ -37,6 +37,13 @@ dependencies {
         jetbrainsRuntime()
         testFramework(TestFrameworkType.Platform)
     }
+    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    // junit-vintage transitively pulls JUnit 3/4's junit.framework.TestCase, which
+    // IntelliJ's bundled JUnit5TestSessionListener references during initialization.
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine")
+    testRuntimeOnly("junit:junit:4.13.2")
 }
 
 intellijPlatform {
@@ -112,6 +119,20 @@ val jbrRoot: String? = file(System.getProperty("user.home") + "/.gradle/caches/9
 
 tasks.named("buildSearchableOptions") {
     enabled = false
+}
+
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform {
+        // The IntelliJ Platform test framework registers a JUnit5 session listener whose
+        // dependencies require running inside a TestApplicationManager; plain unit tests
+        // do not boot the platform, so filter it out at the launcher level.
+        excludeEngines("intellij")
+    }
+    systemProperty("idea.force.use.core.classloader", "true")
+    jvmArgs(
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
+    )
 }
 
 tasks.withType<RunIdeTask>().configureEach {

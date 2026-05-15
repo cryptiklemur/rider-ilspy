@@ -20,3 +20,7 @@ local.properties
 
 ReSharperPlugin/**/bin/
 ReSharperPlugin/**/obj/
+
+# Rider's runIde drops these into the project root as sandbox artefacts.
+LogConfiguration.xml
+LogConfiguration.xsd
