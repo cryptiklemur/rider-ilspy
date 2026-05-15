@@ -21,6 +21,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Plugin verifier pulls 4 Rider IDE bundles (~2GB each extracted) plus JBR + gradle cache.
+      # GitHub-hosted ubuntu-latest only ships ~14GB free on /, which is not enough. Reclaim
+      # the unused .NET, Android, Haskell, etc. tooling that the image preinstalls.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: false
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: true
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
