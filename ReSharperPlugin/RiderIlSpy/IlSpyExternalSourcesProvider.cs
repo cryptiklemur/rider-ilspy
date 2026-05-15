@@ -30,13 +30,19 @@ namespace RiderIlSpy;
 public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
 {
     private const string DecompilerIdConst = "RiderIlSpy";
+    private const int MaxTrackedTypes = 512;
+
+    private static readonly ILogger ourLogger = Logger.GetLogger<IlSpyExternalSourcesProvider>();
 
     private readonly INavigationDecompilationCache myCache;
     private readonly IlSpyDecompiler myDecompiler;
     private readonly IContextBoundSettingsStoreLive mySettings;
     private readonly ConcurrentDictionary<string, TypeDecompileEntry> myEntries = new ConcurrentDictionary<string, TypeDecompileEntry>();
+    private readonly object myEntriesAccessLock = new object();
+    private readonly LinkedList<string> myEntriesOrder = new LinkedList<string>();
     private FileSystemWatcher? myWatcher;
-    private int myRedecompileScheduled;
+    private CancellationTokenSource? myActiveRedecompileCts;
+    private readonly object myRedecompileLock = new object();
 
     public IlSpyExternalSourcesProvider(Lifetime lifetime, ISettingsStore settingsStore, INavigationDecompilationCache cache, IlSpyDecompiler decompiler)
     {
@@ -82,12 +88,35 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     {
         string raw = mySettings.GetValue((IlSpySettings s) => s.AssemblyResolveDirs) ?? "";
         if (raw.Length == 0) return Array.Empty<string>();
-        string[] parts = raw.Split(new[] { ';', ':' }, StringSplitOptions.RemoveEmptyEntries);
+        string[] parts = raw.Split(';', StringSplitOptions.RemoveEmptyEntries);
         List<string> result = new List<string>(parts.Length);
         foreach (string part in parts)
         {
             string trimmed = part.Trim();
-            if (trimmed.Length > 0 && Directory.Exists(trimmed)) result.Add(trimmed);
+            if (trimmed.Length == 0) continue;
+            if (trimmed.StartsWith("\\\\") || trimmed.StartsWith("//"))
+            {
+                ourLogger.Warn("RiderIlSpy: rejecting UNC/network search dir: {0}", trimmed);
+                continue;
+            }
+            if (!Path.IsPathRooted(trimmed))
+            {
+                ourLogger.Warn("RiderIlSpy: rejecting non-absolute search dir: {0}", trimmed);
+                continue;
+            }
+            string canonical;
+            try { canonical = Path.GetFullPath(trimmed); }
+            catch (Exception ex)
+            {
+                ourLogger.Warn("RiderIlSpy: rejecting unresolvable search dir '{0}': {1}", trimmed, ex.Message);
+                continue;
+            }
+            if (!Directory.Exists(canonical))
+            {
+                ourLogger.Warn("RiderIlSpy: search dir does not exist: {0}", canonical);
+                continue;
+            }
+            result.Add(canonical);
         }
         return result;
     }
@@ -97,7 +126,29 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         if (!myCache.CanBeCachedFile(Id, file)) return null;
         DecompilationCacheItem? item = myCache.GetCacheItem(file);
         if (item == null) return null;
+        TryRehydrateEntry(item);
         return new ExternalSourcesMapping(item.Assembly, item.Location, this, isUserFile: false);
+    }
+
+    private void TryRehydrateEntry(DecompilationCacheItem item)
+    {
+        try
+        {
+            if (item.Properties == null) return;
+            if (!item.Properties.TryGetValue("RiderIlSpy.Moniker", out string? moniker)) return;
+            if (string.IsNullOrEmpty(moniker)) return;
+            if (myEntries.ContainsKey(moniker)) return;
+            if (!item.Properties.TryGetValue("RiderIlSpy.Assembly", out string? asmPath)) return;
+            if (!item.Properties.TryGetValue("RiderIlSpy.Type", out string? typeFullName)) return;
+            if (!item.Properties.TryGetValue("RiderIlSpy.FileName", out string? fileName)) return;
+            if (!item.Properties.TryGetValue("RiderIlSpy.Mode", out string? modeStr)) return;
+            if (!Enum.TryParse(modeStr, out IlSpyOutputMode mode)) return;
+            TrackEntry(moniker, new TypeDecompileEntry(item.Assembly, asmPath, typeFullName, moniker, fileName, mode));
+        }
+        catch (Exception ex)
+        {
+            ourLogger.Error(ex, "RiderIlSpy.TryRehydrateEntry failed");
+        }
     }
 
     public IReadOnlyCollection<ExternalSourcesMapping>? NavigateToSources(ICompiledElement compiledElement, ITaskExecutor taskExecutor)
@@ -168,7 +219,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             bool showBanner = mySettings.GetValue((IlSpySettings s) => s.ShowDiagnosticBanner);
 
             string content = string.Empty;
-            bool done = false;
+            using ManualResetEventSlim doneSignal = new ManualResetEventSlim(false);
             taskExecutor.ExecuteTask("Decompiling " + top.ShortName + " with ILSpy", TaskCancelable.Yes, _ =>
             {
                 try
@@ -179,28 +230,66 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
                 {
                     content = "// ILSpy decompile failed for " + fullName + "\n// " + ex.GetType().Name + ": " + ex.Message;
                 }
-                done = true;
+                finally
+                {
+                    doneSignal.Set();
+                }
             });
+
+            if (!doneSignal.Wait(TimeSpan.FromMinutes(2))) return null;
 
             if (showBanner)
             {
-                string banner = "// RiderIlSpy: " + assemblyFile.FullPath + "\n// extra search dirs: " + (extraSearchDirs.Count == 0 ? "(none)" : string.Join(", ", extraSearchDirs)) + "\n\n";
+                string banner = "// RiderIlSpy: " + RedactHome(assemblyFile.FullPath) + "\n// extra search dirs: " + (extraSearchDirs.Count == 0 ? "(none)" : string.Join(", ", extraSearchDirs.Select(RedactHome))) + "\n\n";
                 content = banner + content;
             }
-
-            if (!done) return null;
+            properties["RiderIlSpy.Mode"] = mode.ToString();
+            properties["RiderIlSpy.Assembly"] = assemblyFile.FullPath;
+            properties["RiderIlSpy.Type"] = fullName;
+            properties["RiderIlSpy.Moniker"] = moniker;
+            properties["RiderIlSpy.FileName"] = fileName;
             DecompilationCacheItem? result = myCache.PutCacheItem(Id, assembly, moniker, fileName, properties, content, sourceDebugData: null);
             if (result != null)
             {
-                myEntries[moniker] = new TypeDecompileEntry(assembly, assemblyFile.FullPath, fullName, moniker, fileName, mode);
+                TrackEntry(moniker, new TypeDecompileEntry(assembly, assemblyFile.FullPath, fullName, moniker, fileName, mode));
             }
             return result;
         }
         catch (Exception ex)
         {
-            Logger.LogException("RiderIlSpy.DecompileToCacheItem failed", ex);
+            ourLogger.Error(ex, "RiderIlSpy.DecompileToCacheItem failed");
             return null;
         }
+    }
+
+    private void TrackEntry(string moniker, TypeDecompileEntry entry)
+    {
+        lock (myEntriesAccessLock)
+        {
+            if (myEntries.ContainsKey(moniker))
+            {
+                myEntriesOrder.Remove(moniker);
+            }
+            myEntries[moniker] = entry;
+            myEntriesOrder.AddLast(moniker);
+            while (myEntriesOrder.Count > MaxTrackedTypes)
+            {
+                LinkedListNode<string>? first = myEntriesOrder.First;
+                if (first == null) break;
+                myEntriesOrder.RemoveFirst();
+                myEntries.TryRemove(first.Value, out _);
+            }
+        }
+    }
+
+    private static string RedactHome(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return path;
+        string home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrEmpty(home)) return path;
+        if (path.StartsWith(home, StringComparison.OrdinalIgnoreCase))
+            return "~" + path.Substring(home.Length);
+        return path;
     }
 
     private static IlSpyOutputMode? ReadSharedModeOverride()
@@ -211,7 +300,17 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             if (string.IsNullOrEmpty(home)) return null;
             string path = Path.Combine(home, ".RiderIlSpy", "mode.txt");
             if (!File.Exists(path)) return null;
-            string content = File.ReadAllText(path).Trim();
+            // Retry briefly: the writer may be mid-truncate-and-write; ATOMIC_MOVE on the
+            // Kotlin side avoids this but the file can still be momentarily empty under
+            // races against editor save events.
+            string content = string.Empty;
+            for (int attempt = 0; attempt < 5; attempt++)
+            {
+                try { content = File.ReadAllText(path).Trim(); }
+                catch (IOException) { content = string.Empty; }
+                if (content.Length > 0) break;
+                Thread.Sleep(20);
+            }
             return content switch
             {
                 "CSharp" => IlSpyOutputMode.CSharp,
@@ -231,7 +330,11 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         try
         {
             string home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (string.IsNullOrEmpty(home)) return;
+            if (string.IsNullOrEmpty(home))
+            {
+                ourLogger.Warn("RiderIlSpy.SetupModeWatcher: HOME / user profile env not set; mode changes will not auto-refresh");
+                return;
+            }
             string dir = Path.Combine(home, ".RiderIlSpy");
             Directory.CreateDirectory(dir);
             FileSystemWatcher watcher = new FileSystemWatcher(dir, "mode.txt")
@@ -241,6 +344,11 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             watcher.Changed += OnModeFileChanged;
             watcher.Created += OnModeFileChanged;
             watcher.Renamed += OnModeFileChanged;
+            watcher.Error += (_, errArgs) =>
+            {
+                Exception? err = errArgs.GetException();
+                ourLogger.Warn("RiderIlSpy.SetupModeWatcher: FileSystemWatcher error{0}; mode changes may stop refreshing until Rider restarts. If on Linux check `sysctl fs.inotify.max_user_watches`", err == null ? string.Empty : ": " + err.Message);
+            };
             watcher.EnableRaisingEvents = true;
             myWatcher = watcher;
             lifetime.OnTermination(() =>
@@ -250,30 +358,77 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         }
         catch (Exception ex)
         {
-            Logger.LogException("RiderIlSpy.SetupModeWatcher failed", ex);
+            ourLogger.Warn("RiderIlSpy.SetupModeWatcher failed to install watcher; falling back to per-navigation mode read. Mode changes will not auto-refresh already-open editors. {0}: {1}", ex.GetType().Name, ex.Message);
         }
     }
 
     private void OnModeFileChanged(object sender, FileSystemEventArgs e)
     {
-        if (Interlocked.Exchange(ref myRedecompileScheduled, 1) == 1) return;
+        CancellationTokenSource newCts = new CancellationTokenSource();
+        CancellationTokenSource? previous;
+        lock (myRedecompileLock)
+        {
+            previous = myActiveRedecompileCts;
+            myActiveRedecompileCts = newCts;
+        }
+        try { previous?.Cancel(); } catch { /* ignore */ }
+        try { previous?.Dispose(); } catch { /* ignore */ }
+
         _ = Task.Run(async () =>
         {
             try
             {
-                await Task.Delay(75).ConfigureAwait(false);
-                Interlocked.Exchange(ref myRedecompileScheduled, 0);
-                RedecompileAllEntries();
+                await Task.Delay(75, newCts.Token).ConfigureAwait(false);
+                RedecompileAllEntries(newCts.Token);
+                WriteReadySignal();
+            }
+            catch (OperationCanceledException)
+            {
+                // superseded by a newer mode change; do nothing
             }
             catch (Exception ex)
             {
-                Interlocked.Exchange(ref myRedecompileScheduled, 0);
-                Logger.LogException("RiderIlSpy.RedecompileAllEntries failed", ex);
+                ourLogger.Error(ex, "RiderIlSpy.RedecompileAllEntries failed");
+            }
+            finally
+            {
+                lock (myRedecompileLock)
+                {
+                    if (ReferenceEquals(myActiveRedecompileCts, newCts))
+                        myActiveRedecompileCts = null;
+                }
+                try { newCts.Dispose(); } catch { /* ignore */ }
             }
         });
     }
 
-    private void RedecompileAllEntries()
+    private static void WriteReadySignal()
+    {
+        try
+        {
+            string home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (string.IsNullOrEmpty(home)) return;
+            string dir = Path.Combine(home, ".RiderIlSpy");
+            Directory.CreateDirectory(dir);
+            string path = Path.Combine(dir, "ready.txt");
+            string tmp = path + ".tmp";
+            // counter monotonically increments so file watchers always see size/lastwrite change
+            long ticks = DateTime.UtcNow.Ticks;
+            File.WriteAllText(tmp, ticks.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            try { File.Move(tmp, path, overwrite: true); }
+            catch (PlatformNotSupportedException)
+            {
+                if (File.Exists(path)) File.Delete(path);
+                File.Move(tmp, path);
+            }
+        }
+        catch (Exception ex)
+        {
+            ourLogger.Error(ex, "RiderIlSpy.WriteReadySignal failed");
+        }
+    }
+
+    private void RedecompileAllEntries(CancellationToken cancellationToken)
     {
         if (myEntries.IsEmpty) return;
 
@@ -284,6 +439,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
 
         foreach (KeyValuePair<string, TypeDecompileEntry> kv in myEntries)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             TypeDecompileEntry entry = kv.Value;
             try
             {
@@ -299,17 +455,28 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
 
                 if (showBanner)
                 {
-                    string banner = "// RiderIlSpy: " + entry.AssemblyFilePath + "\n// extra search dirs: " + (extraSearchDirs.Count == 0 ? "(none)" : string.Join(", ", extraSearchDirs)) + "\n\n";
+                    string banner = "// RiderIlSpy: " + RedactHome(entry.AssemblyFilePath) + "\n// extra search dirs: " + (extraSearchDirs.Count == 0 ? "(none)" : string.Join(", ", extraSearchDirs.Select(RedactHome))) + "\n\n";
                     content = banner + content;
                 }
 
-                IDictionary<string, string> properties = new Dictionary<string, string>();
+                IDictionary<string, string> properties = new Dictionary<string, string>
+                {
+                    ["RiderIlSpy.Mode"] = mode.ToString(),
+                    ["RiderIlSpy.Assembly"] = entry.AssemblyFilePath,
+                    ["RiderIlSpy.Type"] = entry.TypeFullName,
+                    ["RiderIlSpy.Moniker"] = entry.Moniker,
+                    ["RiderIlSpy.FileName"] = entry.FileName,
+                };
                 myCache.PutCacheItem(Id, entry.Assembly, entry.Moniker, entry.FileName, properties, content, sourceDebugData: null);
                 entry.Mode = mode;
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
-                Logger.LogException("RiderIlSpy.RedecompileEntry failed for " + entry.TypeFullName, ex);
+                ourLogger.Error(ex, "RiderIlSpy.RedecompileEntry failed for " + entry.TypeFullName);
             }
         }
     }
