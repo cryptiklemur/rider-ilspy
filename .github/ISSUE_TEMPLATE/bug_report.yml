@@ -1,0 +1,92 @@
+name: Bug report
+description: Report a bug in the Rider-ILSpy plugin
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill out the form below so the
+        plugin's behavior can be reproduced.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of what went wrong and what you expected instead.
+      placeholder: |
+        Decompiling System.String shows the wrong banner / produces empty output / crashes Rider / ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Step-by-step instructions to reproduce the bug.
+      placeholder: |
+        1. Open a project that references X
+        2. Ctrl-Click on a symbol in X
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: From `Settings > Plugins > Installed > Rider-ILSpy`.
+      placeholder: "1.0.2"
+    validations:
+      required: true
+
+  - type: input
+    id: rider-version
+    attributes:
+      label: Rider version
+      description: From `Help > About` in Rider.
+      placeholder: "2026.1 EAP 8"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Decompiler mode in use
+      description: Which output mode was selected in the status-bar widget when the bug occurred?
+      options:
+        - C#
+        - IL
+        - C# + IL
+        - Not relevant
+    validations:
+      required: true
+
+  - type: textarea
+    id: banner
+    attributes:
+      label: Decompiler banner output
+      description: |
+        If the bug involves wrong/missing decompilation output, paste the diagnostic banner
+        from the top of the decompiled file (the `// Assembly: ...`, `// MVID: ...` block).
+      render: text
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Relevant excerpts from `Help > Show Log in ...` (Rider) or `~/.RiderIlSpy/` shared
+        channel files. Redact anything sensitive.
+      render: text
