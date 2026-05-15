@@ -9,8 +9,10 @@ module.exports = {
       {
         verifyConditionsCmd:
           'test -n "$JETBRAINS_MARKETPLACE_TOKEN" || (echo "JETBRAINS_MARKETPLACE_TOKEN env not set" && exit 1)',
+        // prepare only bumps the version; publishPlugin depends on buildPlugin so it'll
+        // produce the zip we need for both Marketplace upload and the GH release asset.
         prepareCmd:
-          'sed -i "s/^pluginVersion=.*/pluginVersion=${nextRelease.version}/" gradle.properties && ./gradlew buildPlugin -PpluginVersion=${nextRelease.version}',
+          'sed -i "s/^pluginVersion=.*/pluginVersion=${nextRelease.version}/" gradle.properties',
         publishCmd: './gradlew publishPlugin -PpluginVersion=${nextRelease.version}',
       },
     ],
