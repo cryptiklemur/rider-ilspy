@@ -21,6 +21,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="RiderIlSpy.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="JetBrains.Rider.SDK" Version="2026.1.1" PrivateAssets="all" />
     <!--
       Pinning System.Diagnostics.TraceSource 4.3.0 resolves an NU1107 version conflict:

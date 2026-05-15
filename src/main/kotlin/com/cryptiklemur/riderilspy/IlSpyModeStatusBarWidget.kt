@@ -1,5 +1,8 @@
 package com.cryptiklemur.riderilspy
 
+import com.cryptiklemur.riderilspy.internals.IlSpyFrontendSettings
+import com.cryptiklemur.riderilspy.internals.IlSpyMode
+import com.cryptiklemur.riderilspy.internals.isIlSpyDecompiledPath
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
@@ -92,17 +95,12 @@ class IlSpyModeStatusBarWidget(private val project: Project) :
     private fun refreshOpenIlSpyFiles() {
         if (project.isDisposed) return
         val fem = FileEditorManager.getInstance(project)
-        val targets: List<VirtualFile> = fem.openFiles.filter { isIlSpyDecompiledFile(it) }
+        val targets: List<VirtualFile> = fem.openFiles.filter { isIlSpyDecompiledPath(it.path) }
         if (targets.isEmpty()) return
         ApplicationManager.getApplication().invokeLater {
             if (!project.isDisposed) {
                 VfsUtil.markDirtyAndRefresh(true, false, false, *targets.toTypedArray())
             }
         }
-    }
-
-    private fun isIlSpyDecompiledFile(file: VirtualFile): Boolean {
-        val path = file.path
-        return path.contains("/DecompilerCache/RiderIlSpy/") || path.contains("\\DecompilerCache\\RiderIlSpy\\")
     }
 }

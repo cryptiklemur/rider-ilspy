@@ -1,4 +1,4 @@
-package com.cryptiklemur.riderilspy
+package com.cryptiklemur.riderilspy.internals
 
 enum class IlSpyMode(val displayName: String, val backendName: String) {
     CSharp("C#", "CSharp"),

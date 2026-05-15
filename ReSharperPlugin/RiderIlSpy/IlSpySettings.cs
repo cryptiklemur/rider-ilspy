@@ -42,4 +42,11 @@ public class IlSpySettings
 
     [SettingsEntry(false, "Throw on assembly resolve errors instead of producing best-effort output")]
     public bool ThrowOnAssemblyResolveErrors;
+
+    // Disabled by default so Rider's go-to-definition resolves record-struct
+    // properties — positional primary-ctor syntax dumps callers at the top of
+    // the file instead of the parameter site. Re-enable for a more compact
+    // record syntax when navigation correctness isn't needed.
+    [SettingsEntry(false, "Use primary constructor syntax with records (disable for go-to-definition correctness)")]
+    public bool UsePrimaryConstructorSyntax;
 }

@@ -88,6 +88,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             NamedArguments = mySettings.GetValue((IlSpySettings s) => s.NamedArguments),
             ShowXmlDocumentation = mySettings.GetValue((IlSpySettings s) => s.ShowXmlDocumentation),
             RemoveDeadCode = mySettings.GetValue((IlSpySettings s) => s.RemoveDeadCode),
+            UsePrimaryConstructorSyntax = mySettings.GetValue((IlSpySettings s) => s.UsePrimaryConstructorSyntax),
         };
     }
 
@@ -99,34 +100,23 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         List<string> result = new List<string>(parts.Length);
         foreach (string part in parts)
         {
-            string trimmed = part.Trim();
-            if (trimmed.Length == 0) continue;
-            if (trimmed.StartsWith("\\\\") || trimmed.StartsWith("//"))
+            if (TryNormalizeSearchDir(part, out string canonical, out string? rejection))
             {
-                ourLogger.Warn("RiderIlSpy: rejecting UNC/network search dir: {0}", trimmed);
-                continue;
+                result.Add(canonical);
             }
-            if (!Path.IsPathRooted(trimmed))
+            else if (rejection != null)
             {
-                ourLogger.Warn("RiderIlSpy: rejecting non-absolute search dir: {0}", trimmed);
-                continue;
+                ourLogger.Warn(rejection);
             }
-            string canonical;
-            try { canonical = Path.GetFullPath(trimmed); }
-            catch (Exception ex)
-            {
-                ourLogger.Warn("RiderIlSpy: rejecting unresolvable search dir '{0}': {1}", trimmed, ex.Message);
-                continue;
-            }
-            if (!Directory.Exists(canonical))
-            {
-                ourLogger.Warn("RiderIlSpy: search dir does not exist: {0}", canonical);
-                continue;
-            }
-            result.Add(canonical);
         }
         return result;
     }
+
+    // Delegates to IlSpyExternalSourcesProviderHelpers.TryNormalizeSearchDir
+    // — kept here as a thin wrapper so the call site stays local to the
+    // foreach and the helper class can be tested without ReSharper SDK load.
+    private static bool TryNormalizeSearchDir(string raw, out string canonical, out string? rejection)
+        => IlSpyExternalSourcesProviderHelpers.TryNormalizeSearchDir(raw, out canonical, out rejection);
 
     public ExternalSourcesMapping? MapFileToAssembly(FileSystemPath file)
     {
@@ -141,16 +131,10 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     {
         try
         {
-            if (item.Properties == null) return;
-            if (!item.Properties.TryGetValue("RiderIlSpy.Moniker", out string? moniker)) return;
-            if (string.IsNullOrEmpty(moniker)) return;
-            if (myEntries.ContainsKey(moniker)) return;
-            if (!item.Properties.TryGetValue("RiderIlSpy.Assembly", out string? asmPath)) return;
-            if (!item.Properties.TryGetValue("RiderIlSpy.Type", out string? typeFullName)) return;
-            if (!item.Properties.TryGetValue("RiderIlSpy.FileName", out string? fileName)) return;
-            if (!item.Properties.TryGetValue("RiderIlSpy.Mode", out string? modeStr)) return;
-            if (!Enum.TryParse(modeStr, out IlSpyOutputMode mode)) return;
-            TrackEntry(moniker, new TypeDecompileEntry(item.Assembly, asmPath, typeFullName, moniker, fileName, mode));
+            TypeDecompileEntry? entry = TryParseEntry(item.Properties, item.Assembly);
+            if (entry == null) return;
+            if (myEntries.ContainsKey(entry.Moniker)) return;
+            TrackEntry(entry.Moniker, entry);
         }
         catch (Exception ex)
         {
@@ -158,14 +142,14 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         }
     }
 
-    public IReadOnlyCollection<ExternalSourcesMapping>? NavigateToSources(ICompiledElement compiledElement, ITaskExecutor taskExecutor)
+    public IReadOnlyCollection<ExternalSourcesMapping> NavigateToSources(ICompiledElement compiledElement, ITaskExecutor taskExecutor)
     {
         DecompilationCacheItem? item = DecompileToCacheItem(compiledElement, taskExecutor);
         if (item == null) return ImmutableArray<ExternalSourcesMapping>.Empty;
         return ImmutableArray.Create(new ExternalSourcesMapping(item.Assembly, item.Location, this, isUserFile: false));
     }
 
-    public IReadOnlyCollection<ExternalSourcesMapping>? NavigateToSources(CompiledElementNavigationInfo navigationInfo, ITaskExecutor taskExecutor)
+    public IReadOnlyCollection<ExternalSourcesMapping> NavigateToSources(CompiledElementNavigationInfo navigationInfo, ITaskExecutor taskExecutor)
     {
         return NavigateToSources(navigationInfo.ElementToSearchIn, taskExecutor);
     }
@@ -211,10 +195,9 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             string fullName = clrName.FullName;
             if (string.IsNullOrEmpty(fullName)) return null;
 
-            IlSpyOutputMode mode = ReadRdMode() ?? mySettings.GetValue((IlSpySettings s) => s.OutputMode);
+            IlSpyOutputMode mode = ResolveEffectiveMode();
             string moniker = MonikerUtil.GetTypeCacheMoniker(top);
             string fileName = (top.ShortName ?? "Decompiled") + ".cs";
-            IDictionary<string, string> properties = new Dictionary<string, string>();
 
             myEntries.TryGetValue(moniker, out TypeDecompileEntry? trackedEntry);
             bool sameMode = trackedEntry != null && trackedEntry.Mode == mode;
@@ -233,10 +216,6 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
                 {
                     content = myDecompiler.DecompileType(assemblyFile.FullPath, fullName, decompilerSettings, extraSearchDirs, mode);
                 }
-                catch (Exception ex)
-                {
-                    content = "// ILSpy decompile failed for " + fullName + "\n// " + ex.GetType().Name + ": " + ex.Message;
-                }
                 finally
                 {
                     doneSignal.Set();
@@ -245,15 +224,9 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
 
             if (!doneSignal.Wait(TimeSpan.FromMinutes(2))) return null;
 
-            if (showBanner)
-            {
-                content = BuildDiagnosticBanner(assemblyFile.FullPath, fullName, mode, extraSearchDirs) + content;
-            }
-            properties["RiderIlSpy.Mode"] = mode.ToString();
-            properties["RiderIlSpy.Assembly"] = assemblyFile.FullPath;
-            properties["RiderIlSpy.Type"] = fullName;
-            properties["RiderIlSpy.Moniker"] = moniker;
-            properties["RiderIlSpy.FileName"] = fileName;
+            AssemblyBannerMetadata? bannerMeta = showBanner ? myDecompiler.GetAssemblyBannerMetadata(assemblyFile.FullPath) : null;
+            content = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(showBanner, bannerMeta, assemblyFile.FullPath, fullName, mode, extraSearchDirs, content);
+            IDictionary<string, string> properties = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(mode, assemblyFile.FullPath, fullName, moniker, fileName);
             DecompilationCacheItem? result = myCache.PutCacheItem(Id, assembly, moniker, fileName, properties, content, sourceDebugData: null);
             if (result != null)
             {
@@ -288,89 +261,36 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         }
     }
 
-    private static string RedactHome(string path)
+    // Inverse of BuildCacheProperties — returns null when any required key is
+    // missing or the mode is unparseable.
+    private static TypeDecompileEntry? TryParseEntry(IDictionary<string, string>? properties, IAssembly assembly)
     {
-        if (string.IsNullOrEmpty(path)) return path;
-        string home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (string.IsNullOrEmpty(home)) return path;
-        if (path.StartsWith(home, StringComparison.OrdinalIgnoreCase))
-            return "~" + path.Substring(home.Length);
-        return path;
-    }
-
-    // Mirrors the JetBrains decompiler banner shape so output is visually familiar:
-    //   // Decompiled with RiderIlSpy (ICSharpCode.Decompiler 8.2.0)
-    //   // Type: <fqn>
-    //   // Assembly: <name>, Version=<v>, Culture=<c>, PublicKeyToken=<t>
-    //   // MVID: <guid>
-    //   // Target framework: <tfm>
-    //   // File size: <bytes>
-    //   // Assembly location: <redacted path>
-    //   // XML documentation location: <path or (none)>
-    //   // Mode: <CSharp|IL|CSharpWithIL>
-    //   // Extra search dirs: <(none) or comma list>
-    // Reading metadata is best-effort: if it fails we still emit the path/mode rows so
-    // the banner remains useful (e.g. for diagnosing assembly resolution).
-    private string BuildDiagnosticBanner(string assemblyPath, string typeFullName, IlSpyOutputMode mode, IReadOnlyList<string> extraSearchDirs)
-    {
-        AssemblyBannerMetadata? meta = myDecompiler.GetAssemblyBannerMetadata(assemblyPath);
-        string xmlDocPath = SafeXmlDocPath(assemblyPath);
-        bool xmlExists = !string.IsNullOrEmpty(xmlDocPath) && File.Exists(xmlDocPath);
-
-        StringBuilder sb = new StringBuilder(512);
-        sb.Append("// Decompiled with RiderIlSpy (ICSharpCode.Decompiler ").Append(GetDecompilerVersion()).Append(")\n");
-        sb.Append("// Type: ").Append(typeFullName).Append('\n');
-        if (meta != null)
-        {
-            sb.Append("// Assembly: ").Append(meta.Name)
-              .Append(", Version=").Append(meta.Version)
-              .Append(", Culture=").Append(meta.Culture)
-              .Append(", PublicKeyToken=").Append(meta.PublicKeyToken).Append('\n');
-            sb.Append("// MVID: ").Append(meta.Mvid).Append('\n');
-            sb.Append("// Target framework: ").Append(meta.TargetFramework).Append('\n');
-            sb.Append("// File size: ").Append(meta.FileSize.ToString("N0", CultureInfo.InvariantCulture)).Append(" bytes\n");
-        }
-        sb.Append("// Assembly location: ").Append(RedactHome(assemblyPath)).Append('\n');
-        sb.Append("// XML documentation location: ").Append(xmlExists ? RedactHome(xmlDocPath) : "(none)").Append('\n');
-        sb.Append("// Mode: ").Append(mode).Append('\n');
-        sb.Append("// Extra search dirs: ")
-          .Append(extraSearchDirs.Count == 0 ? "(none)" : string.Join(", ", extraSearchDirs.Select(RedactHome)))
-          .Append("\n\n");
-        return sb.ToString();
-    }
-
-    private static string SafeXmlDocPath(string assemblyPath)
-    {
-        if (string.IsNullOrEmpty(assemblyPath)) return string.Empty;
-        try { return Path.ChangeExtension(assemblyPath, ".xml"); }
-        catch { return string.Empty; }
-    }
-
-    private static string GetDecompilerVersion()
-    {
-        try
-        {
-            Version? v = typeof(CSharpDecompiler).Assembly.GetName().Version;
-            return v?.ToString(3) ?? "unknown";
-        }
-        catch
-        {
-            return "unknown";
-        }
+        if (properties == null) return null;
+        if (!properties.TryGetValue("RiderIlSpy.Moniker", out string? moniker) || string.IsNullOrEmpty(moniker)) return null;
+        if (!properties.TryGetValue("RiderIlSpy.Assembly", out string? asmPath)) return null;
+        if (!properties.TryGetValue("RiderIlSpy.Type", out string? typeFullName)) return null;
+        if (!properties.TryGetValue("RiderIlSpy.FileName", out string? fileName)) return null;
+        if (!properties.TryGetValue("RiderIlSpy.Mode", out string? modeStr)) return null;
+        if (!Enum.TryParse(modeStr, out IlSpyOutputMode mode)) return null;
+        return new TypeDecompileEntry(assembly, asmPath, typeFullName, moniker, fileName, mode);
     }
 
     private IlSpyOutputMode? ReadRdMode()
     {
         string? current = myRiderIlSpyModel.Mode.Value;
         if (string.IsNullOrEmpty(current)) return null;
-        return current switch
-        {
-            "CSharp" => IlSpyOutputMode.CSharp,
-            "IL" => IlSpyOutputMode.IL,
-            "CSharpWithIL" => IlSpyOutputMode.CSharpWithIL,
-            _ => null,
-        };
+        // Wire strings are encoded as IlSpyOutputMode member names by the
+        // kotlin frontend (see IlSpyMode.backendName). Single Enum.TryParse
+        // covers all current modes and any future additions automatically.
+        return Enum.TryParse(current, out IlSpyOutputMode mode) ? mode : (IlSpyOutputMode?)null;
     }
+
+    // Canonical mode-resolution seam: prefer the live wire value when present,
+    // fall back to the persisted setting otherwise. Documented once in
+    // RiderIlSpyModel.kt and centralized here so DecompileToCacheItem and
+    // RedecompileAllEntries agree on the policy by construction.
+    private IlSpyOutputMode ResolveEffectiveMode()
+        => ReadRdMode() ?? mySettings.GetValue((IlSpySettings s) => s.OutputMode);
 
     private void OnRiderIlSpyModeChanged(string? newMode)
     {
@@ -383,22 +303,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             previous = myActiveRedecompileCts;
             myActiveRedecompileCts = newCts;
         }
-        try
-        {
-            previous?.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-            // previous CTS already disposed by its own task's finally — expected race
-        }
-        try
-        {
-            previous?.Dispose();
-        }
-        catch (ObjectDisposedException)
-        {
-            // already disposed by its task's finally — expected race
-        }
+        SafeCancelAndDispose(previous);
 
         _ = Task.Run(async () =>
         {
@@ -425,23 +330,25 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
                     if (ReferenceEquals(myActiveRedecompileCts, newCts))
                         myActiveRedecompileCts = null;
                 }
-                try
-                {
-                    newCts.Dispose();
-                }
-                catch (ObjectDisposedException)
-                {
-                    // already disposed by a concurrent cancel-and-swap path — expected race
-                }
+                SafeCancelAndDispose(newCts);
             }
         });
+    }
+
+    // Cancel + dispose a CancellationTokenSource while tolerating the
+    // ObjectDisposedException race with whichever task path got there first.
+    private static void SafeCancelAndDispose(CancellationTokenSource? cts)
+    {
+        if (cts == null) return;
+        try { cts.Cancel(); } catch (ObjectDisposedException) { /* already disposed by its task's finally */ }
+        try { cts.Dispose(); } catch (ObjectDisposedException) { /* already disposed by a concurrent cancel-and-swap path */ }
     }
 
     private void RedecompileAllEntries(CancellationToken cancellationToken)
     {
         if (myEntries.IsEmpty) return;
 
-        IlSpyOutputMode mode = ReadRdMode() ?? mySettings.GetValue((IlSpySettings s) => s.OutputMode);
+        IlSpyOutputMode mode = ResolveEffectiveMode();
         DecompilerSettings decompilerSettings = BuildDecompilerSettings();
         IReadOnlyList<string> extraSearchDirs = GetExtraSearchDirs();
         bool showBanner = mySettings.GetValue((IlSpySettings s) => s.ShowDiagnosticBanner);
@@ -452,29 +359,11 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             TypeDecompileEntry entry = kv.Value;
             try
             {
-                string content;
-                try
-                {
-                    content = myDecompiler.DecompileType(entry.AssemblyFilePath, entry.TypeFullName, decompilerSettings, extraSearchDirs, mode);
-                }
-                catch (Exception ex)
-                {
-                    content = "// ILSpy decompile failed for " + entry.TypeFullName + "\n// " + ex.GetType().Name + ": " + ex.Message;
-                }
+                string content = myDecompiler.DecompileType(entry.AssemblyFilePath, entry.TypeFullName, decompilerSettings, extraSearchDirs, mode);
+                AssemblyBannerMetadata? bannerMeta = showBanner ? myDecompiler.GetAssemblyBannerMetadata(entry.AssemblyFilePath) : null;
+                content = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(showBanner, bannerMeta, entry.AssemblyFilePath, entry.TypeFullName, mode, extraSearchDirs, content);
 
-                if (showBanner)
-                {
-                    content = BuildDiagnosticBanner(entry.AssemblyFilePath, entry.TypeFullName, mode, extraSearchDirs) + content;
-                }
-
-                IDictionary<string, string> properties = new Dictionary<string, string>
-                {
-                    ["RiderIlSpy.Mode"] = mode.ToString(),
-                    ["RiderIlSpy.Assembly"] = entry.AssemblyFilePath,
-                    ["RiderIlSpy.Type"] = entry.TypeFullName,
-                    ["RiderIlSpy.Moniker"] = entry.Moniker,
-                    ["RiderIlSpy.FileName"] = entry.FileName,
-                };
+                IDictionary<string, string> properties = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(mode, entry.AssemblyFilePath, entry.TypeFullName, entry.Moniker, entry.FileName);
                 myCache.PutCacheItem(Id, entry.Assembly, entry.Moniker, entry.FileName, properties, content, sourceDebugData: null);
                 entry.Mode = mode;
             }

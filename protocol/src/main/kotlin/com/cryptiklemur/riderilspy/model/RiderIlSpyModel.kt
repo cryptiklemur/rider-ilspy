@@ -17,9 +17,16 @@ import com.jetbrains.rider.model.nova.ide.SolutionModel
 //   - mode      : Frontend writes this when the user toggles the ILSpy output
 //                 mode from the status bar; backend advises and re-decompiles
 //                 open files. Encoded as the IlSpyMode.backendName string
-//                 ("CSharp" / "IL" / "CSharpWithIL") so the contract stays
-//                 human-readable in logs and we keep parity with the prior
-//                 file-based protocol.
+//                 ("CSharp" / "IL" / "CSharpWithIL") so rd-protocol traces stay
+//                 grep-able and human-readable rather than opaque enum ordinals.
+//
+//                 Unknown-value policy: if the wire value is null/empty/unknown,
+//                 the C# backend treats it as "no preference" and falls back to
+//                 the persisted IlSpySettings.OutputMode — never silently
+//                 substituting CSharp. The kotlin frontend's
+//                 IlSpyMode.fromBackendName is for parsing persisted settings,
+//                 not protocol values, and falls back to CSharp only when the
+//                 persisted state itself is corrupt.
 //   - readyTick : Backend fires this after each re-decompile pass completes;
 //                 frontend advises and refreshes any open ILSpy editors. The
 //                 payload is a monotonic tick (DateTime.UtcNow.Ticks) so

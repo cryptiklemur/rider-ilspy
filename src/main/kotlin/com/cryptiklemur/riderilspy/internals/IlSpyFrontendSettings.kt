@@ -1,4 +1,4 @@
-package com.cryptiklemur.riderilspy
+package com.cryptiklemur.riderilspy.internals
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.PersistentStateComponent

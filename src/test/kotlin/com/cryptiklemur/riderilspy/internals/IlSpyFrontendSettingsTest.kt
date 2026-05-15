@@ -1,4 +1,4 @@
-package com.cryptiklemur.riderilspy
+package com.cryptiklemur.riderilspy.internals
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test

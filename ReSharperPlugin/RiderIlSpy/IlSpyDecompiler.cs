@@ -14,6 +14,8 @@ using ICSharpCode.Decompiler.Disassembler;
 using ICSharpCode.Decompiler.Metadata;
 using ICSharpCode.Decompiler.TypeSystem;
 using JetBrains.Application;
+using JetBrains.Util;
+using JetBrains.Util.Logging;
 
 namespace RiderIlSpy;
 
@@ -42,6 +44,8 @@ public sealed record AssemblyBannerMetadata(
 [ShellComponent]
 public class IlSpyDecompiler
 {
+    private static readonly ILogger ourLogger = Logger.GetLogger<IlSpyDecompiler>();
+
     public string DecompileType(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs = null, IlSpyOutputMode mode = IlSpyOutputMode.CSharp)
     {
         try
@@ -56,29 +60,26 @@ public class IlSpyDecompiler
                     return DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs);
             }
         }
-        catch (ArgumentException ex) when (mode != IlSpyOutputMode.IL && IsTwoComponentTfmVersionBug(ex) && NeuterImplicitReferences())
+        catch (ArgumentException ex) when (mode != IlSpyOutputMode.IL && IsTwoComponentTfmVersionBug(ex))
         {
-            // The reflection patch above made the buggy foreach a no-op. Retry the original
-            // mode and return real C# (or C# + IL) output.
+            // Hit ILSpy's two-component TFM bug. Try to apply the reflection patch
+            // (visible side effect in the catch body, not in a `when` filter) and
+            // retry. If the patch can't be applied or the retry still fails, fall
+            // back to raw IL disassembly.
+            if (!NeuterImplicitReferences())
+                return FallBackToIl(assemblyPath, typeFullName, settings, extraSearchDirs, ex, null);
+
             try
             {
-                switch (mode)
-                {
-                    case IlSpyOutputMode.CSharpWithIL:
-                        return DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs);
-                    default:
-                        return DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs);
-                }
+                bool wantMixed = mode == IlSpyOutputMode.CSharpWithIL;
+                return wantMixed
+                    ? DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs)
+                    : DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs);
             }
             catch (System.Exception retryEx)
             {
                 return FallBackToIl(assemblyPath, typeFullName, settings, extraSearchDirs, ex, retryEx);
             }
-        }
-        catch (ArgumentException ex) when (mode != IlSpyOutputMode.IL && IsTwoComponentTfmVersionBug(ex))
-        {
-            // NeuterImplicitReferences returned false (reflection patch failed). Fall back to IL.
-            return FallBackToIl(assemblyPath, typeFullName, settings, extraSearchDirs, ex, null);
         }
         catch (System.Exception ex)
         {
@@ -97,23 +98,23 @@ public class IlSpyDecompiler
     // Swapping the static field to an empty array makes the buggy foreach a no-op for
     // every subsequent decompile in this process. If the type actually needs those
     // assemblies, they're already in its own AssemblyRef table and get resolved normally.
-    private static readonly object NeuterLock = new object();
-    private static bool NeuterAttempted;
-    private static bool NeuterSucceeded;
-    private static string? NeuterFailureReason;
+    private static readonly object ourNeuterLock = new object();
+    private static bool ourNeuterAttempted;
+    private static bool ourNeuterSucceeded;
+    private static string? ourNeuterFailureReason;
 
     private static bool NeuterImplicitReferences() => NeuterImplicitReferences(out _);
 
     private static bool NeuterImplicitReferences(out string? failureReason)
     {
-        lock (NeuterLock)
+        lock (ourNeuterLock)
         {
-            if (NeuterAttempted)
+            if (ourNeuterAttempted)
             {
-                failureReason = NeuterFailureReason;
-                return NeuterSucceeded;
+                failureReason = ourNeuterFailureReason;
+                return ourNeuterSucceeded;
             }
-            NeuterAttempted = true;
+            ourNeuterAttempted = true;
 
             try
             {
@@ -123,15 +124,15 @@ public class IlSpyDecompiler
                                 ?? dts.GetField("_implicitReferences", BindingFlags.NonPublic | BindingFlags.Static);
                 if (field == null)
                 {
-                    NeuterFailureReason = "could not find implicitReferences field on DecompilerTypeSystem (loaded version may be different from 8.2)";
-                    failureReason = NeuterFailureReason;
-                    return NeuterSucceeded = false;
+                    ourNeuterFailureReason = "could not find implicitReferences field on DecompilerTypeSystem (loaded version may be different from 8.2)";
+                    failureReason = ourNeuterFailureReason;
+                    return ourNeuterSucceeded = false;
                 }
                 if (field.FieldType != typeof(string[]))
                 {
-                    NeuterFailureReason = "implicitReferences field has unexpected type " + field.FieldType.FullName + " (expected string[])";
-                    failureReason = NeuterFailureReason;
-                    return NeuterSucceeded = false;
+                    ourNeuterFailureReason = "implicitReferences field has unexpected type " + field.FieldType.FullName + " (expected string[])";
+                    failureReason = ourNeuterFailureReason;
+                    return ourNeuterSucceeded = false;
                 }
 
                 // .NET Core 3.0+ blocks FieldInfo.SetValue on `static readonly` (initonly)
@@ -151,15 +152,15 @@ public class IlSpyDecompiler
                 Action<string[]> setter = (Action<string[]>)method.CreateDelegate(typeof(Action<string[]>));
                 setter(Array.Empty<string>());
 
-                NeuterSucceeded = true;
+                ourNeuterSucceeded = true;
                 failureReason = null;
                 return true;
             }
             catch (System.Exception ex)
             {
-                NeuterFailureReason = ex.GetType().FullName + ": " + ex.Message;
-                failureReason = NeuterFailureReason;
-                return NeuterSucceeded = false;
+                ourNeuterFailureReason = ex.GetType().FullName + ": " + ex.Message;
+                failureReason = ourNeuterFailureReason;
+                return ourNeuterSucceeded = false;
             }
         }
     }
@@ -172,11 +173,22 @@ public class IlSpyDecompiler
     // Present in 8.2, 9.1, 10.0 — never been fixed upstream. CSharp and CSharpWithIL modes
     // both go through DecompilerTypeSystem. IL-only mode uses ReflectionDisassembler and
     // skips this entire codepath, so it always works.
-    private static bool IsTwoComponentTfmVersionBug(ArgumentException ex)
+    internal static bool IsTwoComponentTfmVersionBug(ArgumentException ex)
     {
         if (ex.ParamName != "fieldCount") return false;
-        string? trace = ex.StackTrace;
-        return trace != null && trace.Contains("DecompilerTypeSystem");
+        // Walk the exception's stack frames looking for the
+        // ICSharpCode.Decompiler.TypeSystem.DecompilerTypeSystem origin.
+        // Type-identity beats string-matching the formatted StackTrace because
+        // it survives stack-frame omissions in Release builds and is not
+        // affected by namespace renames in user-facing trace text.
+        System.Diagnostics.StackFrame[] frames = new System.Diagnostics.StackTrace(ex, fNeedFileInfo: false).GetFrames();
+        foreach (System.Diagnostics.StackFrame frame in frames)
+        {
+            Type? declaringType = frame.GetMethod()?.DeclaringType;
+            if (declaringType != null && declaringType.FullName == "ICSharpCode.Decompiler.TypeSystem.DecompilerTypeSystem")
+                return true;
+        }
+        return false;
     }
 
     private string FallBackToIl(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs, ArgumentException original, System.Exception? retryFailure)
@@ -188,8 +200,8 @@ public class IlSpyDecompiler
             sb.Append("// RiderIlSpy: C# decompile hit ICSharpCode.Decompiler's 2-component TFM\n");
             sb.Append("// bug (e.g. .NET 10's '.NETCoreApp,Version=v10.0') and the reflection\n");
             sb.Append("// workaround couldn't be applied. Falling back to IL disassembly.\n");
-            if (NeuterFailureReason != null)
-                sb.Append("// Neuter failure: ").Append(NeuterFailureReason).Append('\n');
+            if (ourNeuterFailureReason != null)
+                sb.Append("// Neuter failure: ").Append(ourNeuterFailureReason).Append('\n');
             if (retryFailure != null)
                 sb.Append("// Retry after neuter also threw: ").Append(retryFailure.GetType().FullName).Append(": ").Append(retryFailure.Message).Append('\n');
             sb.Append("//\n");
@@ -198,12 +210,16 @@ public class IlSpyDecompiler
         }
         catch (System.Exception fallbackEx)
         {
-            string body = FormatDecompileFailure(typeFullName, original);
+            StringBuilder sb = new StringBuilder();
+            sb.Append(FormatDecompileFailure(typeFullName, original));
             if (retryFailure != null)
-                body += "\n// CSharp retry after neutering implicit refs also failed:\n" +
-                        FormatDecompileFailure(typeFullName, retryFailure);
-            body += "\n// IL fallback also failed:\n" + FormatDecompileFailure(typeFullName, fallbackEx);
-            return body;
+            {
+                sb.Append("\n// CSharp retry after neutering implicit refs also failed:\n");
+                sb.Append(FormatDecompileFailure(typeFullName, retryFailure));
+            }
+            sb.Append("\n// IL fallback also failed:\n");
+            sb.Append(FormatDecompileFailure(typeFullName, fallbackEx));
+            return sb.ToString();
         }
     }
 
@@ -236,11 +252,18 @@ public class IlSpyDecompiler
 
     public string DecompileAssemblyInfo(string assemblyPath, DecompilerSettings? settings = null, IReadOnlyList<string>? extraSearchDirs = null)
     {
-        DecompilerSettings effective = settings ?? new DecompilerSettings();
-        using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
-        UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, effective, extraSearchDirs);
-        CSharpDecompiler decompiler = new CSharpDecompiler(module, resolver, effective);
-        return decompiler.DecompileModuleAndAssemblyAttributesToString();
+        try
+        {
+            DecompilerSettings effective = settings ?? new DecompilerSettings();
+            using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
+            UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, effective, extraSearchDirs);
+            CSharpDecompiler decompiler = new CSharpDecompiler(module, resolver, effective);
+            return decompiler.DecompileModuleAndAssemblyAttributesToString();
+        }
+        catch (System.Exception ex)
+        {
+            return FormatDecompileFailure(assemblyPath, ex);
+        }
     }
 
     /// <summary>
@@ -251,50 +274,13 @@ public class IlSpyDecompiler
     /// </summary>
     public AssemblyBannerMetadata? GetAssemblyBannerMetadata(string assemblyPath)
     {
-        try
-        {
-            using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchMetadata, MetadataReaderOptions.Default);
-            MetadataReader metadata = module.Metadata;
-            if (!metadata.IsAssembly) return null;
-
-            AssemblyDefinition def = metadata.GetAssemblyDefinition();
-            string name = metadata.GetString(def.Name);
-            string version = def.Version?.ToString() ?? "0.0.0.0";
-            string culture = metadata.GetString(def.Culture);
-            if (string.IsNullOrEmpty(culture)) culture = "neutral";
-
-            byte[] publicKey = def.PublicKey.IsNil ? System.Array.Empty<byte>() : metadata.GetBlobBytes(def.PublicKey);
-            string publicKeyToken = publicKey.Length == 0
-                ? "null"
-                : ComputePublicKeyToken(publicKey);
-
-            ModuleDefinition modDef = metadata.GetModuleDefinition();
-            string mvid = metadata.GetGuid(modDef.Mvid).ToString("D").ToUpperInvariant();
-
-            long fileSize = 0L;
-            try { fileSize = new FileInfo(assemblyPath).Length; } catch { /* unreadable size is non-fatal */ }
-
-            string targetFramework = "unknown";
-            try { targetFramework = module.DetectTargetFrameworkId() ?? "unknown"; } catch { /* missing TFM is non-fatal */ }
-
-            return new AssemblyBannerMetadata(name, version, culture, publicKeyToken, mvid, fileSize, targetFramework);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    // ECMA-335 II.6.3: the public key token is the last 8 bytes of the SHA1 hash of
-    // the public key, in reverse order. Strong-named assemblies store the full key in
-    // the AssemblyDef row; unsigned assemblies store nothing.
-    private static string ComputePublicKeyToken(byte[] publicKey)
-    {
-        using SHA1 sha = SHA1.Create();
-        byte[] hash = sha.ComputeHash(publicKey);
-        StringBuilder sb = new StringBuilder(16);
-        for (int i = 0; i < 8; i++) sb.Append(hash[hash.Length - 1 - i].ToString("x2"));
-        return sb.ToString();
+        // Body lives in IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata
+        // (SDK-free, unit-testable). Wrapper here just adds Warn-on-null logging so
+        // banner failures stay diagnosable in the IDE without polluting the helper.
+        AssemblyBannerMetadata? result = IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata(assemblyPath);
+        if (result == null && File.Exists(assemblyPath))
+            ourLogger.Warn("RiderIlSpy.GetAssemblyBannerMetadata returned null for " + assemblyPath);
+        return result;
     }
 
     private static string DecompileToCSharp(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs)

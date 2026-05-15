@@ -36,7 +36,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:28</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:35</p>
   /// </summary>
   public class RiderIlSpyModel : RdExtBase
   {

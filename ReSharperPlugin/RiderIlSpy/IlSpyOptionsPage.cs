@@ -8,6 +8,9 @@ namespace RiderIlSpy;
 [OptionsPage(Pid, "ILSpy Decompiler", null)]
 public class IlSpyOptionsPage : BeSimpleOptionsPage
 {
+    // Framework-imposed triplication — keep in sync with PAGE_ID in
+    // src/main/kotlin/com/cryptiklemur/riderilspy/IlSpyOptionsPage.kt (canonical source)
+    // and the <applicationConfigurable id=...> attribute in plugin.xml.
     public const string Pid = "RiderIlSpyOptionsPage";
 
     public IlSpyOptionsPage(Lifetime lifetime, OptionsPageContext optionsPageContext, OptionsSettingsSmartContext optionsSettingsSmartContext)
@@ -37,5 +40,6 @@ public class IlSpyOptionsPage : BeSimpleOptionsPage
         AddBoolOption((IlSpySettings s) => s.ShowXmlDocumentation, "Show XML documentation comments", null);
         AddBoolOption((IlSpySettings s) => s.RemoveDeadCode, "Remove dead code", null);
         AddBoolOption((IlSpySettings s) => s.ThrowOnAssemblyResolveErrors, "Throw on assembly resolve errors (instead of best-effort output)", null);
+        AddBoolOption((IlSpySettings s) => s.UsePrimaryConstructorSyntax, "Use primary constructor syntax with records (disable for go-to-definition correctness)", null);
     }
 }

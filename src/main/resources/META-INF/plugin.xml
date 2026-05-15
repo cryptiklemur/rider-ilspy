@@ -11,10 +11,12 @@
     <depends>com.intellij.modules.rider</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+        <!-- id must match PAGE_ID in IlSpyOptionsPage.kt (canonical source)
+             and the Pid constant in ReSharperPlugin/RiderIlSpy/IlSpyOptionsPage.cs. -->
         <applicationConfigurable instance="com.cryptiklemur.riderilspy.IlSpyOptionsPage"
                                  id="RiderIlSpyOptionsPage"
                                  displayName="ILSpy Decompiler"/>
-        <applicationService serviceImplementation="com.cryptiklemur.riderilspy.IlSpyFrontendSettings"/>
+        <applicationService serviceImplementation="com.cryptiklemur.riderilspy.internals.IlSpyFrontendSettings"/>
         <projectService serviceImplementation="com.cryptiklemur.riderilspy.IlSpyProtocolHost"/>
         <statusBarWidgetFactory id="RiderIlSpy.ModeStatusBarWidget"
                                 implementation="com.cryptiklemur.riderilspy.IlSpyModeStatusBarWidgetFactory"

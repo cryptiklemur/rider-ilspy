@@ -51,10 +51,11 @@ To run the plugin in a sandboxed Rider for development:
 
 ## How it works
 
-The plugin has two halves:
+The plugin has three pieces, talking over the JetBrains rd protocol:
 
-- **Kotlin frontend** (`src/main/kotlin/...`) — status-bar widget, persistent settings, options page. Writes the current mode to `~/.RiderIlSpy/mode.txt`.
-- **C# ReSharper backend** (`ReSharperPlugin/RiderIlSpy/...`) — registers an `IExternalSourcesProvider` so Rider's navigation pipeline routes through ILSpy. Watches the mode file via `FileSystemWatcher` and re-decompiles tracked types in place when the mode changes.
+- **Kotlin frontend** (`src/main/kotlin/...`) — status-bar widget, persistent settings, options page. `IlSpyProtocolHost` pushes the selected mode onto `RiderIlSpyModel.mode` whenever the user toggles it, and advises on `RiderIlSpyModel.readyTick` to refresh open ILSpy editors.
+- **C# ReSharper backend** (`ReSharperPlugin/RiderIlSpy/...`) — registers an `IExternalSourcesProvider` so Rider's navigation pipeline routes through ILSpy. `IlSpyExternalSourcesProvider` advises on the rd `mode` property, redecompiles tracked types in place when it changes, and fires `readyTick` so the frontend knows when to refresh.
+- **Shared protocol contract** (`protocol/`) — an rd-gen subproject that generates the `RiderIlSpyModel` extension on `SolutionModel.Solution`. Both runtimes consume the generated bindings, so the IPC surface lives in one place.
 
 ## License
 
