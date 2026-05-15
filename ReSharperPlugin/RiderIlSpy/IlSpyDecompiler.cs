@@ -56,8 +56,35 @@ public class IlSpyDecompiler
         }
         catch (System.Exception ex)
         {
-            return "// RiderIlSpy decompile failed for " + typeFullName + "\n// " + ex.GetType().FullName + ": " + ex.Message;
+            return FormatDecompileFailure(typeFullName, ex);
         }
+    }
+
+    // Wraps an exception thrown out of ICSharpCode.Decompiler into a comment-only C# file
+    // that Rider can display. Includes the full exception chain + stack trace so the user
+    // can copy/paste it into a bug report without us needing a second round-trip.
+    private static string FormatDecompileFailure(string typeFullName, System.Exception ex)
+    {
+        StringBuilder sb = new StringBuilder();
+        sb.Append("// RiderIlSpy decompile failed for ").Append(typeFullName).Append('\n');
+        sb.Append("//\n");
+        sb.Append("// This is almost always an ICSharpCode.Decompiler bug. Please file an issue at\n");
+        sb.Append("// https://github.com/cryptiklemur/rider-ilspy/issues with the type name and the\n");
+        sb.Append("// trace below.\n");
+        sb.Append("//\n");
+        System.Exception? current = ex;
+        int depth = 0;
+        while (current != null)
+        {
+            string indent = depth == 0 ? "// " : "//   ";
+            sb.Append(indent).Append(current.GetType().FullName).Append(": ").Append(current.Message).Append('\n');
+            if (!string.IsNullOrEmpty(current.StackTrace))
+                foreach (string line in current.StackTrace.Split('\n'))
+                    sb.Append("//     ").Append(line.TrimEnd('\r')).Append('\n');
+            current = current.InnerException;
+            depth++;
+        }
+        return sb.ToString();
     }
 
     public string DecompileAssemblyInfo(string assemblyPath, DecompilerSettings? settings = null, IReadOnlyList<string>? extraSearchDirs = null)
