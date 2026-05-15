@@ -2,6 +2,8 @@
 
 Replaces Rider's built-in decompiler with [ILSpy](https://github.com/icsharpcode/ILSpy) for assembly browsing, goto-definition into external sources, and debug-data driven navigation.
 
+![Rider showing ILSpy-decompiled C# + IL mixed output with the ILSpy mode switcher in the status bar](docs/screenshot.png)
+
 ## Features
 
 - ILSpy-quality C# output for any compiled type you navigate into
