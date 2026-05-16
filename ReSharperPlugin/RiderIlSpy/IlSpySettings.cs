@@ -10,6 +10,21 @@ public enum IlSpyOutputMode
     CSharpWithIL = 2,
 }
 
+// Mirrors ICSharpCode.Decompiler.CSharp.LanguageVersion. Stored numerically
+// so the persisted ordinal stays meaningful across ILSpy upgrades — the
+// underlying enum uses sparse values (701, 800, 900, ...) that match the
+// ILSpy convention. `Latest` is the sentinel meaning "let ILSpy pick" and
+// is the default for new installs.
+public enum IlSpyLanguageVersion
+{
+    Latest = 0,
+    CSharp7_3 = 703,
+    CSharp8_0 = 800,
+    CSharp9_0 = 900,
+    CSharp10_0 = 1000,
+    CSharp11_0 = 1100,
+}
+
 [SettingsKey(typeof(EnvironmentSettings), "ILSpy decompiler settings")]
 public class IlSpySettings
 {
@@ -49,4 +64,12 @@ public class IlSpySettings
     // record syntax when navigation correctness isn't needed.
     [SettingsEntry(false, "Use primary constructor syntax with records (disable for go-to-definition correctness)")]
     public bool UsePrimaryConstructorSyntax;
+
+    // Downgrades decompiler output to an older language level. Useful when
+    // browsing assemblies built before a given C# version — modern syntax
+    // (records, init accessors, file-scoped namespaces, raw strings) gets
+    // back-rewritten to its pre-feature equivalent. Defaults to Latest so
+    // existing installs see no change.
+    [SettingsEntry(IlSpyLanguageVersion.Latest, "Target C# language version for decompiled output")]
+    public IlSpyLanguageVersion LanguageVersion;
 }

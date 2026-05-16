@@ -80,7 +80,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
 
     private DecompilerSettings BuildDecompilerSettings()
     {
-        return new DecompilerSettings
+        DecompilerSettings settings = new DecompilerSettings
         {
             ThrowOnAssemblyResolveErrors = mySettings.GetValue((IlSpySettings s) => s.ThrowOnAssemblyResolveErrors),
             AsyncAwait = mySettings.GetValue((IlSpySettings s) => s.AsyncAwait),
@@ -90,6 +90,16 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             RemoveDeadCode = mySettings.GetValue((IlSpySettings s) => s.RemoveDeadCode),
             UsePrimaryConstructorSyntax = mySettings.GetValue((IlSpySettings s) => s.UsePrimaryConstructorSyntax),
         };
+        // Apply language-version downgrade after construction so unspecified
+        // (Latest) leaves ILSpy's defaults untouched. SetLanguageVersion
+        // flips multiple feature flags (RecordClasses, InitAccessors, ...)
+        // to match the target version's capability set.
+        IlSpyLanguageVersion languageVersion = mySettings.GetValue((IlSpySettings s) => s.LanguageVersion);
+        if (languageVersion != IlSpyLanguageVersion.Latest)
+        {
+            settings.SetLanguageVersion((LanguageVersion)(int)languageVersion);
+        }
+        return settings;
     }
 
     private IReadOnlyList<string> GetExtraSearchDirs()

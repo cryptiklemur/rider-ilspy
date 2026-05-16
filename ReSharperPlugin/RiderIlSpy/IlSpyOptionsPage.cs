@@ -41,5 +41,16 @@ public class IlSpyOptionsPage : BeSimpleOptionsPage
         AddBoolOption((IlSpySettings s) => s.RemoveDeadCode, "Remove dead code", null);
         AddBoolOption((IlSpySettings s) => s.ThrowOnAssemblyResolveErrors, "Throw on assembly resolve errors (instead of best-effort output)", null);
         AddBoolOption((IlSpySettings s) => s.UsePrimaryConstructorSyntax, "Use primary constructor syntax with records (disable for go-to-definition correctness)", null);
+
+        AddComboEnum((IlSpySettings s) => s.LanguageVersion, "Target C# language version:", v => v switch
+        {
+            IlSpyLanguageVersion.Latest => "Latest (default)",
+            IlSpyLanguageVersion.CSharp11_0 => "C# 11.0",
+            IlSpyLanguageVersion.CSharp10_0 => "C# 10.0",
+            IlSpyLanguageVersion.CSharp9_0 => "C# 9.0",
+            IlSpyLanguageVersion.CSharp8_0 => "C# 8.0",
+            IlSpyLanguageVersion.CSharp7_3 => "C# 7.3",
+            _ => v.ToString(),
+        });
     }
 }

@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.RegularExpressions;
 using ICSharpCode.Decompiler;
+using ICSharpCode.Decompiler.CSharp;
 using Xunit;
 
 namespace RiderIlSpy.Tests;
@@ -120,6 +121,38 @@ public class IlSpyDecompilerSmokeTests
         // would lack these accessor blocks and fail this regex match.
         Assert.Matches(new Regex(@"\bint\s+Bar\s*\{[^}]*get"), output);
         Assert.Matches(new Regex(@"\bstring\s+Baz\s*\{[^}]*get"), output);
+    }
+
+    // Language-version target: setting the language version to C# 7.3 should
+    // strip features that landed in later versions. Records arrived in C# 9
+    // so a 7.3 target must NOT emit the `record` keyword anywhere in the
+    // output — ILSpy back-rewrites the type as a regular struct.
+    [Fact]
+    public void DecompileType_record_struct_with_csharp_7_3_target_drops_record_keyword()
+    {
+        IlSpyDecompiler decompiler = new IlSpyDecompiler();
+        DecompilerSettings settings = new DecompilerSettings();
+        settings.SetLanguageVersion(LanguageVersion.CSharp7_3);
+        string output = decompiler.DecompileType(TestAssemblyPath, "RiderIlSpy.Tests.BugTwoRecordFixture", settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp);
+        Assert.False(string.IsNullOrEmpty(output));
+        // `\brecord\s+(class|struct)\b` would match positional or non-positional
+        // record syntax; both must be absent at the 7.3 target.
+        Assert.DoesNotMatch(new Regex(@"\brecord\s+(class|struct)\b"), output);
+    }
+
+    // Paired with the test above: confirms Latest target DOES emit the
+    // `record` keyword for the same fixture — proves the assertion above is
+    // actually discriminating between language versions, not always passing.
+    [Fact]
+    public void DecompileType_record_struct_with_latest_target_keeps_record_keyword()
+    {
+        IlSpyDecompiler decompiler = new IlSpyDecompiler();
+        DecompilerSettings settings = new DecompilerSettings();
+        // Latest is the default — being explicit here documents intent.
+        settings.SetLanguageVersion(LanguageVersion.Latest);
+        string output = decompiler.DecompileType(TestAssemblyPath, "RiderIlSpy.Tests.BugTwoRecordFixture", settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp);
+        Assert.False(string.IsNullOrEmpty(output));
+        Assert.Matches(new Regex(@"\brecord\s+struct\b"), output);
     }
 
     // Paired with the test above: confirms the same regex would NOT match when
