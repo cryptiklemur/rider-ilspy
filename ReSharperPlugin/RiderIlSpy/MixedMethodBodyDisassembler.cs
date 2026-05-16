@@ -28,7 +28,7 @@ internal sealed class MixedMethodBodyDisassembler : MethodBodyDisassembler
         myResolver = resolver;
     }
 
-    public override void Disassemble(PEFile module, MethodDefinitionHandle handle)
+    public override void Disassemble(MetadataFile module, MethodDefinitionHandle handle)
     {
         try
         {
@@ -58,7 +58,7 @@ internal sealed class MixedMethodBodyDisassembler : MethodBodyDisassembler
         }
     }
 
-    protected override void WriteInstruction(ITextOutput output, MetadataReader metadata, MethodDefinitionHandle methodHandle, ref BlobReader blob, int methodRva)
+    protected override void WriteInstruction(ITextOutput output, MetadataFile metadataFile, MethodDefinitionHandle methodHandle, ref BlobReader blob, int methodRva)
     {
         if (mySequencePoints != null && myCodeLines != null)
         {
@@ -81,7 +81,7 @@ internal sealed class MixedMethodBodyDisassembler : MethodBodyDisassembler
                 }
             }
         }
-        base.WriteInstruction(output, metadata, methodHandle, ref blob, methodRva);
+        base.WriteInstruction(output, metadataFile, methodHandle, ref blob, methodRva);
     }
 
     private static void WriteCode(TextWriter output, DecompilerSettings settings, SyntaxTree syntaxTree)

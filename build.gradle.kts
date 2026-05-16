@@ -9,10 +9,12 @@ val rdKotlinVersion: String by project
 
 plugins {
     // Match the Kotlin version of rider-model.jar bundled with Rider 2026.1.1
-    // (metadata [2,3,0]). The :protocol subproject's DSL extends classes from
-    // that jar, so producing both sides with the same compiler avoids
-    // "incompatible Kotlin metadata" failures at rd-gen time.
-    kotlin("jvm") version "2.3.0"
+    // (metadata [2,3,0]). 2.3.21 is the latest patch on the 2.3.x line, which
+    // stays binary-compatible with that metadata. The :protocol subproject's
+    // DSL extends classes from rider-model.jar, so producing both sides with
+    // the same compiler avoids "incompatible Kotlin metadata" failures at
+    // rd-gen time.
+    kotlin("jvm") version "2.3.21"
     id("org.jetbrains.intellij.platform") version "2.16.0"
 }
 
@@ -44,7 +46,7 @@ dependencies {
         jetbrainsRuntime()
         testFramework(TestFrameworkType.Platform)
     }
-    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation(platform("org.junit:junit-bom:5.14.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     // junit-vintage transitively pulls JUnit 3/4's junit.framework.TestCase, which
