@@ -124,7 +124,7 @@ public class IlSpyDecompiler
         }
     }
 
-    public string DecompileType(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs = null, IlSpyOutputMode mode = IlSpyOutputMode.CSharp)
+    public string DecompileType(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs = null, IlSpyOutputMode mode = IlSpyOutputMode.CSharp, bool emitCrosslinkMarkers = true)
     {
         try
         {
@@ -133,7 +133,7 @@ public class IlSpyDecompiler
                 case IlSpyOutputMode.IL:
                     return DisassembleToIl(assemblyPath, typeFullName, settings, extraSearchDirs);
                 case IlSpyOutputMode.CSharpWithIL:
-                    return DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs);
+                    return DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs, emitCrosslinkMarkers);
                 default:
                     return DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs);
             }
@@ -151,7 +151,7 @@ public class IlSpyDecompiler
             {
                 bool wantMixed = mode == IlSpyOutputMode.CSharpWithIL;
                 return wantMixed
-                    ? DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs)
+                    ? DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs, emitCrosslinkMarkers)
                     : DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs);
             }
             catch (System.Exception retryEx)
@@ -418,7 +418,7 @@ public class IlSpyDecompiler
         return decompiler.DecompileTypeAsString(ftn);
     }
 
-    private static string DisassembleMixed(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs)
+    private static string DisassembleMixed(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs, bool emitCrosslinkMarkers = true)
     {
         using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
         UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, settings, extraSearchDirs);
@@ -428,7 +428,7 @@ public class IlSpyDecompiler
 
         using StringWriter sw = new StringWriter();
         PlainTextOutput output = new PlainTextOutput(sw);
-        MixedMethodBodyDisassembler bodyDisassembler = new MixedMethodBodyDisassembler(output, CancellationToken.None, settings, resolver)
+        MixedMethodBodyDisassembler bodyDisassembler = new MixedMethodBodyDisassembler(output, CancellationToken.None, settings, resolver, emitCrosslinkMarkers)
         {
             DetectControlStructure = true,
             ShowSequencePoints = false,

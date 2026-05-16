@@ -57,5 +57,9 @@ public class IlSpyOptionsPage : BeSimpleOptionsPage
         AddCommentText("When an assembly's PDB declares SourceLink (e.g. .NET BCL, most modern NuGet packages), fetch the published original source instead of decompiling.");
         AddBoolOption((IlSpySettings s) => s.PreferSourceLink, "Prefer original source via SourceLink when available", null);
         AddIntOption((IlSpySettings s) => s.SourceLinkTimeoutSeconds, "Fetch timeout (seconds):");
+
+        AddHeader("Mixed-mode crosslink");
+        AddCommentText("In 'C# with IL' mode, emit machine-readable markers above each IL instruction so the editor can navigate between IL labels and C# source lines.");
+        AddBoolOption((IlSpySettings s) => s.EmitCrosslinkMarkers, "Emit crosslink markers in mixed (C# + IL) output", null);
     }
 }

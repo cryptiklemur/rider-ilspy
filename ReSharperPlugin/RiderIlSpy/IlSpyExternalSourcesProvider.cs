@@ -261,6 +261,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             bool showBanner = mySettings.GetValue((IlSpySettings s) => s.ShowDiagnosticBanner);
             bool preferSourceLink = mySettings.GetValue((IlSpySettings s) => s.PreferSourceLink);
             int sourceLinkTimeout = mySettings.GetValue((IlSpySettings s) => s.SourceLinkTimeoutSeconds);
+            bool emitCrosslinkMarkers = mySettings.GetValue((IlSpySettings s) => s.EmitCrosslinkMarkers);
 
             string content = string.Empty;
             bool fromSourceLink = false;
@@ -282,7 +283,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
                             return;
                         }
                     }
-                    content = myDecompiler.DecompileType(assemblyFile.FullPath, fullName, decompilerSettings, extraSearchDirs, mode);
+                    content = myDecompiler.DecompileType(assemblyFile.FullPath, fullName, decompilerSettings, extraSearchDirs, mode, emitCrosslinkMarkers);
                 }
                 finally
                 {
@@ -427,6 +428,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         DecompilerSettings decompilerSettings = BuildDecompilerSettings();
         IReadOnlyList<string> extraSearchDirs = GetExtraSearchDirs();
         bool showBanner = mySettings.GetValue((IlSpySettings s) => s.ShowDiagnosticBanner);
+        bool emitCrosslinkMarkers = mySettings.GetValue((IlSpySettings s) => s.EmitCrosslinkMarkers);
 
         foreach (KeyValuePair<string, TypeDecompileEntry> kv in myEntries)
         {
@@ -434,7 +436,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             TypeDecompileEntry entry = kv.Value;
             try
             {
-                string content = myDecompiler.DecompileType(entry.AssemblyFilePath, entry.TypeFullName, decompilerSettings, extraSearchDirs, mode);
+                string content = myDecompiler.DecompileType(entry.AssemblyFilePath, entry.TypeFullName, decompilerSettings, extraSearchDirs, mode, emitCrosslinkMarkers);
                 AssemblyBannerMetadata? bannerMeta = showBanner ? myDecompiler.GetAssemblyBannerMetadata(entry.AssemblyFilePath) : null;
                 content = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(showBanner, bannerMeta, entry.AssemblyFilePath, entry.TypeFullName, mode, extraSearchDirs, content);
 

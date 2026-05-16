@@ -18,14 +18,16 @@ internal sealed class MixedMethodBodyDisassembler : MethodBodyDisassembler
 {
     private readonly DecompilerSettings mySettings;
     private readonly IAssemblyResolver myResolver;
+    private readonly bool myEmitCrosslinkMarkers;
     private List<SequencePoint>? mySequencePoints;
     private string[]? myCodeLines;
 
-    public MixedMethodBodyDisassembler(ITextOutput output, CancellationToken cancellationToken, DecompilerSettings settings, IAssemblyResolver resolver)
+    public MixedMethodBodyDisassembler(ITextOutput output, CancellationToken cancellationToken, DecompilerSettings settings, IAssemblyResolver resolver, bool emitCrosslinkMarkers = true)
         : base(output, cancellationToken)
     {
         mySettings = settings;
         myResolver = resolver;
+        myEmitCrosslinkMarkers = emitCrosslinkMarkers;
     }
 
     public override void Disassemble(MetadataFile module, MethodDefinitionHandle handle)
@@ -68,6 +70,11 @@ internal sealed class MixedMethodBodyDisassembler : MethodBodyDisassembler
                 SequencePoint info = mySequencePoints[index];
                 if (!info.IsHidden)
                 {
+                    if (myEmitCrosslinkMarkers)
+                    {
+                        string? marker = CrosslinkMarker.Format(blob.Offset, info);
+                        if (marker != null) output.WriteLine(marker);
+                    }
                     for (int line = info.StartLine; line <= info.EndLine; line++)
                     {
                         if (line < 1 || line > myCodeLines.Length) continue;
