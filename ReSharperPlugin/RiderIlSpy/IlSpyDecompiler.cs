@@ -385,15 +385,15 @@ public class IlSpyDecompiler
         Directory.CreateDirectory(targetDirectory);
         using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
         UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, settings, extraSearchDirs);
-        // 5-arg ctor is the only one that accepts custom DecompilerSettings — the
+        // 4-arg ctor is the only one that accepts custom DecompilerSettings — the
         // single-arg ctor builds its own defaults and exposes Settings as get-only.
-        // The IProjectFileWriter slot (added in 10.0) is left null so ILSpy picks
-        // its default DefaultProjectFileWriter; we only need to override that when
-        // we want a different .csproj layout.
+        // ICSharpCode.Decompiler 10.x added an IProjectFileWriter slot in position 3
+        // but Rider 2026.1 ships 8.2.x at runtime, so we MUST use the 8.2-shape ctor
+        // here. Bumping the package without verifying Rider's bundled version led
+        // to a MissingMethodException; see the csproj comment for the full story.
         WholeProjectDecompiler projectDecompiler = new WholeProjectDecompiler(
             settings,
             resolver,
-            projectWriter: null,
             assemblyReferenceClassifier: null,
             debugInfoProvider: null);
         projectDecompiler.DecompileProject(module, targetDirectory, cancellationToken);

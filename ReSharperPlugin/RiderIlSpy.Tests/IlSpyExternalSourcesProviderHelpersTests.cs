@@ -196,6 +196,58 @@ public class IlSpyExternalSourcesProviderHelpersTests
         Assert.DoesNotContain("// Assembly:", banner); // meta-only row is absent when meta == null
     }
 
+    // ReadAssemblyBannerMetadata regression: previously untested in unit pipeline.
+    // Crashed inside Rider with MissingMethodException after the ICSharpCode.Decompiler
+    // 8.2 → 10.0 bump because the compiler had inlined a 4-arg `new PEFile(...,
+    // MetadataStringDecoder)` call — 10.x added that optional 4th parameter as a
+    // default, baking the longer signature into our IL, while Rider 2026.1's
+    // bundled 8.2.x assembly only has the 3-arg form.
+    //
+    // These tests run the helper end-to-end against a real PE so any future
+    // recurrence — accidental signature drift in helper code, or a dep bump that
+    // re-introduces an inlined ctor that's absent from Rider's runtime — fails
+    // the test pipeline locally instead of waiting for a sandboxed Rider crash.
+
+    [Fact]
+    public void ReadAssemblyBannerMetadata_succeeds_for_real_managed_assembly()
+    {
+        string asmPath = typeof(IlSpyExternalSourcesProviderHelpersTests).Assembly.Location;
+        Assert.True(File.Exists(asmPath));
+
+        AssemblyBannerMetadata? meta = IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata(asmPath);
+
+        Assert.NotNull(meta);
+        Assert.False(string.IsNullOrEmpty(meta!.Name));
+        Assert.False(string.IsNullOrEmpty(meta.Version));
+        Assert.Equal(36, meta.Mvid.Length); // Guid "D" format = 36 chars (32 hex + 4 dashes)
+        Assert.True(meta.FileSize > 0, "file size must reflect on-disk length");
+        // Don't pin Name/Version exactly — those are set by the test SDK and shift
+        // across SDK versions. The non-empty + structural assertions are what's
+        // load-bearing for the MissingMethodException regression.
+    }
+
+    [Fact]
+    public void ReadAssemblyBannerMetadata_returns_null_for_nonexistent_path()
+    {
+        string fake = Path.Combine(Path.GetTempPath(), "RiderIlSpyTests-banner-" + Guid.NewGuid().ToString("N") + ".dll");
+        Assert.Null(IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata(fake));
+    }
+
+    [Fact]
+    public void ReadAssemblyBannerMetadata_returns_null_for_non_pe_file()
+    {
+        string fake = Path.Combine(Path.GetTempPath(), "RiderIlSpyTests-nonpe-" + Guid.NewGuid().ToString("N") + ".dll");
+        File.WriteAllText(fake, "definitely not a PE");
+        try
+        {
+            Assert.Null(IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata(fake));
+        }
+        finally
+        {
+            File.Delete(fake);
+        }
+    }
+
     [Fact]
     public void BuildDiagnosticBanner_emits_full_metadata_when_meta_is_present()
     {

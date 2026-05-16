@@ -33,7 +33,17 @@
       `dotnet restore` fails. Do not remove without first updating the transitive deps.
     -->
     <PackageReference Include="System.Diagnostics.TraceSource" Version="4.3.0" />
-    <PackageReference Include="ICSharpCode.Decompiler" Version="10.0.1.8346" />
+    <!--
+      DO NOT BUMP ICSharpCode.Decompiler past 8.2.x without verifying the
+      version Rider actually ships at runtime. Rider 2026.1 bundles 8.2.x;
+      compiling against 10.x baked a 4-arg `PEFile..ctor(..., MetadataStringDecoder)`
+      callsite via the C# compiler's default-argument inlining, and the runtime
+      crashed with MissingMethodException because that overload doesn't exist
+      on the bundled assembly. The unit-test surface can't catch this — only
+      a runIde sandbox can — so the easy way to stay safe is to match Rider's
+      bundled version exactly.
+    -->
+    <PackageReference Include="ICSharpCode.Decompiler" Version="8.2.0.7535" />
   </ItemGroup>
 
 </Project>
