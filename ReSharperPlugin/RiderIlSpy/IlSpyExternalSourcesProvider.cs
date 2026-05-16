@@ -20,6 +20,7 @@ using JetBrains.Metadata.Debug;
 using JetBrains.Metadata.Reader.API;
 using JetBrains.ProjectModel;
 using JetBrains.ProjectModel.Model2.Assemblies.Interfaces;
+using JetBrains.Rd.Tasks;
 using JetBrains.ReSharper.Feature.Services.ExternalSource;
 using JetBrains.ReSharper.Feature.Services.ExternalSources.Core;
 using JetBrains.ReSharper.Feature.Services.ExternalSources.Utils;
@@ -57,6 +58,47 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         mySettings = settingsStore.BindToContextLive(lifetime, ContextRange.ApplicationWide);
         myRiderIlSpyModel = solution.GetProtocolSolution().GetRiderIlSpyModel();
         myRiderIlSpyModel.Mode.Advise(lifetime, OnRiderIlSpyModeChanged);
+        // Endpoint for "Save Decompiled Assembly as Project..." — frontend kotlin
+        // action calls this via the rd protocol. SetSync runs the handler on the
+        // protocol thread; the kotlin side wraps the call in a backgroundable
+        // progress task so the IDE stays responsive while ILSpy churns.
+        myRiderIlSpyModel.SaveAsProject.SetSync(OnSaveAsProjectRequest);
+    }
+
+    /// <summary>
+    /// rd handler for <see cref="RiderIlSpyModel"/>.SaveAsProject. Wraps
+    /// <see cref="IlSpyDecompiler.DecompileAssemblyToProject"/> and reports either
+    /// a successful summary or an error message back across the protocol. Never
+    /// throws to the rd layer — exceptions become <c>success=false</c> responses
+    /// so the kotlin action can render them as a notification.
+    /// </summary>
+    private SaveAsProjectResponse OnSaveAsProjectRequest(Lifetime _, SaveAsProjectRequest request)
+    {
+        try
+        {
+            DecompilerSettings settings = BuildDecompilerSettings();
+            IReadOnlyList<string> extraDirs = GetExtraSearchDirs();
+            DecompileAssemblyToProjectResult result = myDecompiler.DecompileAssemblyToProject(
+                request.AssemblyPath,
+                request.TargetDirectory,
+                settings,
+                extraDirs,
+                CancellationToken.None);
+            return new SaveAsProjectResponse(
+                success: true,
+                projectFilePath: result.ProjectFilePath ?? "",
+                csharpFileCount: result.CSharpFileCount,
+                errorMessage: "");
+        }
+        catch (System.Exception ex)
+        {
+            ourLogger.Error(ex, "RiderIlSpy.SaveAsProject failed for " + request.AssemblyPath);
+            return new SaveAsProjectResponse(
+                success: false,
+                projectFilePath: "",
+                csharpFileCount: 0,
+                errorMessage: ex.Message ?? ex.GetType().Name);
+        }
     }
 
     public string PresentableShortName => "ILSpy";

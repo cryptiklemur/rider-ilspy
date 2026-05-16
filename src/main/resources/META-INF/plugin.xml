@@ -21,5 +21,21 @@
         <statusBarWidgetFactory id="RiderIlSpy.ModeStatusBarWidget"
                                 implementation="com.cryptiklemur.riderilspy.IlSpyModeStatusBarWidgetFactory"
                                 order="last"/>
+        <!-- Notification group for SaveAsProjectAction completion + failure
+             messages. Balloon (not toolwindow) so success/failure surfaces
+             outside whichever tool window is focused. -->
+        <notificationGroup id="RiderIlSpy" displayType="BALLOON"/>
     </extensions>
+
+    <actions>
+        <!-- "Save Decompiled Assembly as Project..." — see SaveAsProjectAction.kt.
+             Lives under Tools because that's where one-shot solution-scoped
+             utilities conventionally go (Tools | NuGet, Tools | XML Actions, etc.). -->
+        <action id="RiderIlSpy.SaveAsProjectAction"
+                class="com.cryptiklemur.riderilspy.SaveAsProjectAction"
+                text="Save Decompiled Assembly as Project..."
+                description="Decompile a managed .dll or .exe to a buildable C# project tree using ILSpy.">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>

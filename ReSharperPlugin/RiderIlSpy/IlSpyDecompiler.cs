@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Reflection.Metadata;
@@ -10,6 +11,7 @@ using System.Text;
 using System.Threading;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.CSharp;
+using ICSharpCode.Decompiler.CSharp.ProjectDecompiler;
 using ICSharpCode.Decompiler.Disassembler;
 using ICSharpCode.Decompiler.Metadata;
 using ICSharpCode.Decompiler.TypeSystem;
@@ -40,6 +42,20 @@ public sealed record AssemblyBannerMetadata(
     string Mvid,
     long FileSize,
     string TargetFramework);
+
+/// <summary>
+/// Result of <see cref="IlSpyDecompiler.DecompileAssemblyToProject"/>. Surfaces the directory ILSpy
+/// wrote into plus a couple of summary counts so the caller can show a "wrote N files, project at X"
+/// confirmation without re-enumerating the output tree.
+/// </summary>
+/// <param name="OutputDirectory">Absolute path that was passed as the project root.</param>
+/// <param name="ProjectFilePath">Absolute path to the generated .csproj, or null if ILSpy
+/// emitted source without a project (rare — happens for module-only assemblies).</param>
+/// <param name="CSharpFileCount">Number of .cs files written under <paramref name="OutputDirectory"/>.</param>
+public sealed record DecompileAssemblyToProjectResult(
+    string OutputDirectory,
+    string? ProjectFilePath,
+    int CSharpFileCount);
 
 [ShellComponent]
 public class IlSpyDecompiler
@@ -281,6 +297,44 @@ public class IlSpyDecompiler
         if (result == null && File.Exists(assemblyPath))
             ourLogger.Warn("RiderIlSpy.GetAssemblyBannerMetadata returned null for " + assemblyPath);
         return result;
+    }
+
+    /// <summary>
+    /// Decompiles an entire assembly to a buildable C# project tree under <paramref name="targetDirectory"/>.
+    /// Wraps ILSpy's <see cref="WholeProjectDecompiler"/> with the same resolver / search-dir setup that
+    /// per-type decompilation uses, so the output respects the user's IlSpySettings (language version,
+    /// async/await reconstruction, primary-ctor toggle, extra search dirs, etc.).
+    /// </summary>
+    /// <param name="assemblyPath">Path to the assembly to decompile.</param>
+    /// <param name="targetDirectory">Directory to write the project tree into. Created if missing.
+    /// Existing files inside may be overwritten by ILSpy without warning — caller should pick a fresh dir.</param>
+    /// <param name="settings">Decompiler settings; usually built via BuildDecompilerSettings from
+    /// IlSpyExternalSourcesProvider so the IDE's user-facing toggles are honored.</param>
+    /// <param name="extraSearchDirs">Optional extra assembly search dirs (matches DecompileType's contract).</param>
+    /// <param name="cancellationToken">Cancellation; ILSpy honors it between types.</param>
+    /// <returns>Summary describing where the project was written and how many .cs files it contains.</returns>
+    public DecompileAssemblyToProjectResult DecompileAssemblyToProject(
+        string assemblyPath,
+        string targetDirectory,
+        DecompilerSettings settings,
+        IReadOnlyList<string>? extraSearchDirs = null,
+        CancellationToken cancellationToken = default)
+    {
+        Directory.CreateDirectory(targetDirectory);
+        using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
+        UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, settings, extraSearchDirs);
+        // 4-arg ctor is the only one that accepts custom DecompilerSettings — the
+        // single-arg ctor builds its own defaults and exposes Settings as get-only.
+        WholeProjectDecompiler projectDecompiler = new WholeProjectDecompiler(
+            settings,
+            resolver,
+            assemblyReferenceClassifier: null,
+            debugInfoProvider: null);
+        projectDecompiler.DecompileProject(module, targetDirectory, cancellationToken);
+
+        string? projectFilePath = Directory.EnumerateFiles(targetDirectory, "*.csproj", SearchOption.TopDirectoryOnly).FirstOrDefault();
+        int csharpFileCount = Directory.EnumerateFiles(targetDirectory, "*.cs", SearchOption.AllDirectories).Count();
+        return new DecompileAssemblyToProjectResult(targetDirectory, projectFilePath, csharpFileCount);
     }
 
     private static string DecompileToCSharp(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs)

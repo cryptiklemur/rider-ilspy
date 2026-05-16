@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.CSharp;
@@ -173,5 +174,94 @@ public class IlSpyDecompilerSmokeTests
         // standalone bodied property declarations.
         Assert.Matches(new Regex(@"record\s+struct\s+BugTwoRecordFixture\s*\("), output);
         Assert.DoesNotMatch(new Regex(@"\bint\s+Bar\s*\{[^}]*get"), output);
+    }
+
+    // Feature #3: whole-assembly project export. The helper wraps ILSpy's
+    // WholeProjectDecompiler so the user can save a decompiled assembly as a
+    // buildable .csproj tree from the IDE. Smoke-test by exporting the test
+    // assembly itself to a temp dir and asserting that:
+    //   1. A .csproj is written to the output root.
+    //   2. At least one .cs file lands somewhere under the tree.
+    //   3. The result record's counts match the on-disk reality.
+    // Anything more specific than this drifts with every ILSpy release because
+    // the project layout (Properties/, obj/, namespace folders) is an
+    // implementation detail of WholeProjectDecompiler, not part of its contract.
+    [Fact]
+    public void DecompileAssemblyToProject_writes_csproj_and_source_files()
+    {
+        IlSpyDecompiler decompiler = new IlSpyDecompiler();
+        string tempRoot = Path.Combine(Path.GetTempPath(), "RiderIlSpy_ProjectExport_" + Path.GetRandomFileName());
+        try
+        {
+            DecompilerSettings settings = new DecompilerSettings();
+            DecompileAssemblyToProjectResult result = decompiler.DecompileAssemblyToProject(TestAssemblyPath, tempRoot, settings);
+
+            Assert.Equal(tempRoot, result.OutputDirectory);
+            Assert.NotNull(result.ProjectFilePath);
+            Assert.True(File.Exists(result.ProjectFilePath!), $"expected .csproj on disk at {result.ProjectFilePath}");
+            Assert.EndsWith(".csproj", result.ProjectFilePath!);
+            Assert.True(result.CSharpFileCount > 0, "expected at least one .cs file written");
+
+            int actualCs = Directory.EnumerateFiles(tempRoot, "*.cs", SearchOption.AllDirectories).Count();
+            Assert.Equal(actualCs, result.CSharpFileCount);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+                Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    // Paired with the test above: confirms the helper creates the target
+    // directory if it does not already exist (rather than throwing). This is
+    // the realistic UX path — the user picks a brand-new folder in a dir
+    // picker, the folder may not exist yet, and the helper should just write.
+    [Fact]
+    public void DecompileAssemblyToProject_creates_target_directory_if_missing()
+    {
+        IlSpyDecompiler decompiler = new IlSpyDecompiler();
+        string tempRoot = Path.Combine(Path.GetTempPath(), "RiderIlSpy_ProjectExport_Missing_" + Path.GetRandomFileName());
+        Assert.False(Directory.Exists(tempRoot), "precondition: temp dir should not exist yet");
+        try
+        {
+            DecompilerSettings settings = new DecompilerSettings();
+            DecompileAssemblyToProjectResult result = decompiler.DecompileAssemblyToProject(TestAssemblyPath, tempRoot, settings);
+            Assert.True(Directory.Exists(tempRoot), "expected helper to create the target directory");
+            Assert.True(result.CSharpFileCount > 0);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+                Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    // Paired with the test above: confirms settings flow through to the
+    // project output the same way they flow through per-type decompile. With
+    // primary-ctor syntax disabled, the BugTwoRecordFixture should appear as
+    // bodied properties somewhere in the exported project, not as positional
+    // form. This pins the contract that BuildDecompilerSettings (from the
+    // production code path) is the right knob for project export too.
+    [Fact]
+    public void DecompileAssemblyToProject_respects_decompiler_settings()
+    {
+        IlSpyDecompiler decompiler = new IlSpyDecompiler();
+        string tempRoot = Path.Combine(Path.GetTempPath(), "RiderIlSpy_ProjectExport_Settings_" + Path.GetRandomFileName());
+        try
+        {
+            DecompilerSettings settings = new DecompilerSettings
+            {
+                UsePrimaryConstructorSyntax = false,
+            };
+            decompiler.DecompileAssemblyToProject(TestAssemblyPath, tempRoot, settings);
+            bool anyMatch = Directory.EnumerateFiles(tempRoot, "*.cs", SearchOption.AllDirectories)
+                .Any(f => Regex.IsMatch(File.ReadAllText(f), @"\bint\s+Bar\s*\{[^}]*get"));
+            Assert.True(anyMatch, "expected at least one .cs file to contain a bodied property for BugTwoRecordFixture.Bar");
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+                Directory.Delete(tempRoot, recursive: true);
+        }
     }
 }

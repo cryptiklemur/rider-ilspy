@@ -36,7 +36,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:35</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:44</p>
   /// </summary>
   public class RiderIlSpyModel : RdExtBase
   {
@@ -44,38 +44,45 @@ namespace RiderIlSpy.Model
     //public fields
     [NotNull] public IViewableProperty<string> Mode => _Mode;
     [NotNull] public ISignal<long> ReadyTick => _ReadyTick;
+    [NotNull] public IRdEndpoint<SaveAsProjectRequest, SaveAsProjectResponse> SaveAsProject => _SaveAsProject;
     
     //private fields
     [NotNull] private readonly RdProperty<string> _Mode;
     [NotNull] private readonly RdSignal<long> _ReadyTick;
+    [NotNull] private readonly RdCall<SaveAsProjectRequest, SaveAsProjectResponse> _SaveAsProject;
     
     //primary constructor
     private RiderIlSpyModel(
       [NotNull] RdProperty<string> mode,
-      [NotNull] RdSignal<long> readyTick
+      [NotNull] RdSignal<long> readyTick,
+      [NotNull] RdCall<SaveAsProjectRequest, SaveAsProjectResponse> saveAsProject
     )
     {
       if (mode == null) throw new ArgumentNullException("mode");
       if (readyTick == null) throw new ArgumentNullException("readyTick");
+      if (saveAsProject == null) throw new ArgumentNullException("saveAsProject");
       
       _Mode = mode;
       _ReadyTick = readyTick;
+      _SaveAsProject = saveAsProject;
       _Mode.OptimizeNested = true;
       BindableChildren.Add(new KeyValuePair<string, object>("mode", _Mode));
       BindableChildren.Add(new KeyValuePair<string, object>("readyTick", _ReadyTick));
+      BindableChildren.Add(new KeyValuePair<string, object>("saveAsProject", _SaveAsProject));
     }
     //secondary constructor
     internal RiderIlSpyModel (
     ) : this (
       new RdProperty<string>(JetBrains.Rd.Impl.Serializers.ReadString, JetBrains.Rd.Impl.Serializers.WriteString),
-      new RdSignal<long>(JetBrains.Rd.Impl.Serializers.ReadLong, JetBrains.Rd.Impl.Serializers.WriteLong)
+      new RdSignal<long>(JetBrains.Rd.Impl.Serializers.ReadLong, JetBrains.Rd.Impl.Serializers.WriteLong),
+      new RdCall<SaveAsProjectRequest, SaveAsProjectResponse>(SaveAsProjectRequest.Read, SaveAsProjectRequest.Write, SaveAsProjectResponse.Read, SaveAsProjectResponse.Write)
     ) {}
     //deconstruct trait
     //statics
     
     
     
-    protected override long SerializationHash => 4283210212157620969L;
+    protected override long SerializationHash => 891022274870918931L;
     
     protected override Action<ISerializers> Register => RegisterDeclaredTypesSerializers;
     public static void RegisterDeclaredTypesSerializers(ISerializers serializers)
@@ -98,6 +105,7 @@ namespace RiderIlSpy.Model
       using (printer.IndentCookie()) {
         printer.Print("mode = "); _Mode.PrintEx(printer); printer.Println();
         printer.Print("readyTick = "); _ReadyTick.PrintEx(printer); printer.Println();
+        printer.Print("saveAsProject = "); _SaveAsProject.PrintEx(printer); printer.Println();
       }
       printer.Print(")");
     }
@@ -114,6 +122,210 @@ namespace RiderIlSpy.Model
     public static RiderIlSpyModel GetRiderIlSpyModel(this JetBrains.Rider.Model.Solution solution)
     {
       return solution.GetOrCreateExtension("riderIlSpyModel", () => new RiderIlSpyModel());
+    }
+  }
+  
+  
+  /// <summary>
+  /// <p>Generated from: RiderIlSpyModel.kt:47</p>
+  /// </summary>
+  public sealed class SaveAsProjectRequest : IPrintable, IEquatable<SaveAsProjectRequest>
+  {
+    //fields
+    //public fields
+    [NotNull] public string AssemblyPath {get; private set;}
+    [NotNull] public string TargetDirectory {get; private set;}
+    
+    //private fields
+    //primary constructor
+    public SaveAsProjectRequest(
+      [NotNull] string assemblyPath,
+      [NotNull] string targetDirectory
+    )
+    {
+      if (assemblyPath == null) throw new ArgumentNullException("assemblyPath");
+      if (targetDirectory == null) throw new ArgumentNullException("targetDirectory");
+      
+      AssemblyPath = assemblyPath;
+      TargetDirectory = targetDirectory;
+    }
+    //secondary constructor
+    //deconstruct trait
+    public void Deconstruct([NotNull] out string assemblyPath, [NotNull] out string targetDirectory)
+    {
+      assemblyPath = AssemblyPath;
+      targetDirectory = TargetDirectory;
+    }
+    //statics
+    
+    public static CtxReadDelegate<SaveAsProjectRequest> Read = (ctx, reader) => 
+    {
+      var assemblyPath = reader.ReadString();
+      var targetDirectory = reader.ReadString();
+      var _result = new SaveAsProjectRequest(assemblyPath, targetDirectory);
+      return _result;
+    };
+    
+    public static CtxWriteDelegate<SaveAsProjectRequest> Write = (ctx, writer, value) => 
+    {
+      writer.Write(value.AssemblyPath);
+      writer.Write(value.TargetDirectory);
+    };
+    
+    //constants
+    
+    //custom body
+    //methods
+    //equals trait
+    public override bool Equals(object obj)
+    {
+      if (ReferenceEquals(null, obj)) return false;
+      if (ReferenceEquals(this, obj)) return true;
+      if (obj.GetType() != GetType()) return false;
+      return Equals((SaveAsProjectRequest) obj);
+    }
+    public bool Equals(SaveAsProjectRequest other)
+    {
+      if (ReferenceEquals(null, other)) return false;
+      if (ReferenceEquals(this, other)) return true;
+      return AssemblyPath == other.AssemblyPath && TargetDirectory == other.TargetDirectory;
+    }
+    //hash code trait
+    public override int GetHashCode()
+    {
+      unchecked {
+        var hash = 0;
+        hash = hash * 31 + AssemblyPath.GetHashCode();
+        hash = hash * 31 + TargetDirectory.GetHashCode();
+        return hash;
+      }
+    }
+    //pretty print
+    public void Print(PrettyPrinter printer)
+    {
+      printer.Println("SaveAsProjectRequest (");
+      using (printer.IndentCookie()) {
+        printer.Print("assemblyPath = "); AssemblyPath.PrintEx(printer); printer.Println();
+        printer.Print("targetDirectory = "); TargetDirectory.PrintEx(printer); printer.Println();
+      }
+      printer.Print(")");
+    }
+    //toString
+    public override string ToString()
+    {
+      var printer = new SingleLinePrettyPrinter();
+      Print(printer);
+      return printer.ToString();
+    }
+  }
+  
+  
+  /// <summary>
+  /// <p>Generated from: RiderIlSpyModel.kt:51</p>
+  /// </summary>
+  public sealed class SaveAsProjectResponse : IPrintable, IEquatable<SaveAsProjectResponse>
+  {
+    //fields
+    //public fields
+    public bool Success {get; private set;}
+    [NotNull] public string ProjectFilePath {get; private set;}
+    public int CsharpFileCount {get; private set;}
+    [NotNull] public string ErrorMessage {get; private set;}
+    
+    //private fields
+    //primary constructor
+    public SaveAsProjectResponse(
+      bool success,
+      [NotNull] string projectFilePath,
+      int csharpFileCount,
+      [NotNull] string errorMessage
+    )
+    {
+      if (projectFilePath == null) throw new ArgumentNullException("projectFilePath");
+      if (errorMessage == null) throw new ArgumentNullException("errorMessage");
+      
+      Success = success;
+      ProjectFilePath = projectFilePath;
+      CsharpFileCount = csharpFileCount;
+      ErrorMessage = errorMessage;
+    }
+    //secondary constructor
+    //deconstruct trait
+    public void Deconstruct(out bool success, [NotNull] out string projectFilePath, out int csharpFileCount, [NotNull] out string errorMessage)
+    {
+      success = Success;
+      projectFilePath = ProjectFilePath;
+      csharpFileCount = CsharpFileCount;
+      errorMessage = ErrorMessage;
+    }
+    //statics
+    
+    public static CtxReadDelegate<SaveAsProjectResponse> Read = (ctx, reader) => 
+    {
+      var success = reader.ReadBool();
+      var projectFilePath = reader.ReadString();
+      var csharpFileCount = reader.ReadInt();
+      var errorMessage = reader.ReadString();
+      var _result = new SaveAsProjectResponse(success, projectFilePath, csharpFileCount, errorMessage);
+      return _result;
+    };
+    
+    public static CtxWriteDelegate<SaveAsProjectResponse> Write = (ctx, writer, value) => 
+    {
+      writer.Write(value.Success);
+      writer.Write(value.ProjectFilePath);
+      writer.Write(value.CsharpFileCount);
+      writer.Write(value.ErrorMessage);
+    };
+    
+    //constants
+    
+    //custom body
+    //methods
+    //equals trait
+    public override bool Equals(object obj)
+    {
+      if (ReferenceEquals(null, obj)) return false;
+      if (ReferenceEquals(this, obj)) return true;
+      if (obj.GetType() != GetType()) return false;
+      return Equals((SaveAsProjectResponse) obj);
+    }
+    public bool Equals(SaveAsProjectResponse other)
+    {
+      if (ReferenceEquals(null, other)) return false;
+      if (ReferenceEquals(this, other)) return true;
+      return Success == other.Success && ProjectFilePath == other.ProjectFilePath && CsharpFileCount == other.CsharpFileCount && ErrorMessage == other.ErrorMessage;
+    }
+    //hash code trait
+    public override int GetHashCode()
+    {
+      unchecked {
+        var hash = 0;
+        hash = hash * 31 + Success.GetHashCode();
+        hash = hash * 31 + ProjectFilePath.GetHashCode();
+        hash = hash * 31 + CsharpFileCount.GetHashCode();
+        hash = hash * 31 + ErrorMessage.GetHashCode();
+        return hash;
+      }
+    }
+    //pretty print
+    public void Print(PrettyPrinter printer)
+    {
+      printer.Println("SaveAsProjectResponse (");
+      using (printer.IndentCookie()) {
+        printer.Print("success = "); Success.PrintEx(printer); printer.Println();
+        printer.Print("projectFilePath = "); ProjectFilePath.PrintEx(printer); printer.Println();
+        printer.Print("csharpFileCount = "); CsharpFileCount.PrintEx(printer); printer.Println();
+        printer.Print("errorMessage = "); ErrorMessage.PrintEx(printer); printer.Println();
+      }
+      printer.Print(")");
+    }
+    //toString
+    public override string ToString()
+    {
+      var printer = new SingleLinePrettyPrinter();
+      Print(printer);
+      return printer.ToString();
     }
   }
 }
