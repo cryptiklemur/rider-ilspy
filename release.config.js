@@ -4,6 +4,12 @@ module.exports = {
   plugins: [
     ['@semantic-release/commit-analyzer', { preset: 'angular' }],
     ['@semantic-release/release-notes-generator', { preset: 'angular' }],
+    // Render the generated release notes to HTML and stash them in
+    // build/changelog-latest.html so the IntelliJ Platform Gradle Plugin's
+    // changeNotes provider (see build.gradle.kts) can inject them into the
+    // patched plugin.xml at publishPlugin time. Must run BEFORE the exec
+    // plugin so the file exists when ./gradlew publishPlugin starts.
+    ['./scripts/release-notes-writer.mjs', {}],
     [
       '@semantic-release/exec',
       {

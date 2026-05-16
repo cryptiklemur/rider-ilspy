@@ -61,6 +61,14 @@ intellijPlatform {
             sinceBuild = "261"
             untilBuild = provider { null }
         }
+        // Marketplace "What's New" content. Populated at release time by
+        // scripts/release-notes-writer.mjs (a local semantic-release plugin
+        // that converts release-notes-generator's markdown output to HTML).
+        // The file is missing for local/non-release builds — the Provider
+        // returns an empty string in that case so patchPluginXml stays happy.
+        changeNotes = layout.buildDirectory.file("changelog-latest.html").map { file ->
+            file.asFile.takeIf { it.exists() }?.readText()?.ifBlank { "" } ?: ""
+        }.orElse("")
     }
 
     publishing {
