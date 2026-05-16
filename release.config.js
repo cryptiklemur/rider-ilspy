@@ -2,8 +2,33 @@ module.exports = {
   branches: ['main'],
   tagFormat: 'v${version}',
   plugins: [
-    ['@semantic-release/commit-analyzer', { preset: 'angular' }],
-    ['@semantic-release/release-notes-generator', { preset: 'angular' }],
+    [
+      '@semantic-release/commit-analyzer',
+      {
+        preset: 'angular',
+        // Override the default Angular ruleset: in this repo a refactor is a
+        // structural improvement worth shipping as a minor bump (not a no-op).
+        // Keeps fix/feat/BREAKING semantics unchanged.
+        releaseRules: [{ type: 'refactor', release: 'minor' }],
+      },
+    ],
+    [
+      '@semantic-release/release-notes-generator',
+      {
+        preset: 'angular',
+        // Surface refactor commits in the generated changelog under their own
+        // section — the default Angular preset hides them entirely.
+        presetConfig: {
+          types: [
+            { type: 'feat', section: 'Features' },
+            { type: 'fix', section: 'Bug Fixes' },
+            { type: 'perf', section: 'Performance Improvements' },
+            { type: 'refactor', section: 'Refactors' },
+            { type: 'revert', section: 'Reverts' },
+          ],
+        },
+      },
+    ],
     // Render the generated release notes to HTML and stash them in
     // build/changelog-latest.html so the IntelliJ Platform Gradle Plugin's
     // changeNotes provider (see build.gradle.kts) can inject them into the
