@@ -9,7 +9,17 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { prepare, writeChangelogFiles } from "./release-notes-writer.mjs";
+import { prepare, sanitizeReleaseNotes, writeChangelogFiles } from "./release-notes-writer.mjs";
+
+// Realistic shape of release-notes-generator's angular preset output: a
+// linked version + ISO date heading line, blank line, then sections. Used
+// across several sanitize tests below.
+const SEMREL_NOTES_SAMPLE = `## [1.2.0](https://github.com/foo/bar/compare/v1.1.5...v1.2.0) (2026-05-15)
+
+### Bug Fixes
+
+* fix(plugin): regression ([abc1234](https://example/abc1234))
+`;
 
 async function withTempCwd(fn) {
     const dir = await mkdtemp(join(tmpdir(), "rider-ilspy-rnw-"));
@@ -74,6 +84,46 @@ test("prepare lifecycle hook writes files using nextRelease.notes", async () => 
         assert.ok(md.includes("- alpha"));
         assert.equal(logs.length, 1, "prepare should emit exactly one log line");
         assert.match(logs[0], /release-notes-writer: wrote/);
+    });
+});
+
+test("sanitizeReleaseNotes strips the linked version+date heading line", () => {
+    const cleaned = sanitizeReleaseNotes(SEMREL_NOTES_SAMPLE);
+    assert.ok(!cleaned.includes("1.2.0"), "version label must be stripped");
+    assert.ok(!cleaned.includes("2026-05-15"), "release date must be stripped");
+    assert.ok(cleaned.startsWith("### Bug Fixes"), "first surviving line must be the first section heading");
+});
+
+test("sanitizeReleaseNotes strips plain '# 1.2.0 (date)' heading too", () => {
+    const cleaned = sanitizeReleaseNotes("# 1.2.0 (2026-05-15)\n\n### Features\n\n* feat: thing\n");
+    assert.ok(cleaned.startsWith("### Features"));
+});
+
+test("sanitizeReleaseNotes left-trims all leading newlines and whitespace", () => {
+    const cleaned = sanitizeReleaseNotes("\n\n\n   \n## [1.0.0](url) (2026-01-01)\n\n\n### Features\n");
+    assert.equal(cleaned, "### Features\n");
+});
+
+test("sanitizeReleaseNotes leaves non-version section headings intact when there is no version line", () => {
+    const cleaned = sanitizeReleaseNotes("### Features\n\n* feat: thing\n");
+    assert.equal(cleaned, "### Features\n\n* feat: thing\n");
+});
+
+test("sanitizeReleaseNotes returns empty string for null/undefined/empty", () => {
+    assert.equal(sanitizeReleaseNotes(null), "");
+    assert.equal(sanitizeReleaseNotes(undefined), "");
+    assert.equal(sanitizeReleaseNotes(""), "");
+});
+
+test("writeChangelogFiles output starts directly at the first section heading", async () => {
+    await withTempCwd(async (dir) => {
+        const { html, markdownPath } = await writeChangelogFiles(SEMREL_NOTES_SAMPLE, { cwd: dir });
+        // No leading whitespace, no trace of the version label / date.
+        assert.ok(html.startsWith("<h3"), `expected output to start with <h3>, got: ${html.slice(0, 40)}`);
+        assert.ok(!html.includes("1.2.0"));
+        assert.ok(!html.includes("2026-05-15"));
+        const writtenMd = await readFile(markdownPath, "utf8");
+        assert.ok(writtenMd.startsWith("### Bug Fixes"));
     });
 });
 

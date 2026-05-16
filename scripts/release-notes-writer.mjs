@@ -16,6 +16,31 @@ import { marked } from "marked";
 const DEFAULT_MARKDOWN_PATH = "build/release-notes.md";
 const DEFAULT_HTML_PATH = "build/changelog-latest.html";
 
+// Matches the version-heading line that release-notes-generator emits at the
+// top of nextRelease.notes — e.g.
+//   ## [1.2.0](https://github.com/.../compare/v1.1.5...v1.2.0) (2026-05-15)
+//   # 1.2.0 (2026-05-15)
+//   ## 1.2.0 (2026-05-15)
+// Marketplace already shows the version label above the "What's New" body,
+// so duplicating it inside the changelog is just noise. Strip the FIRST
+// occurrence only (greedy match would eat real section headings).
+const VERSION_HEADING_LINE = /^#+\s+\[?[\d][\w.\-+]*\]?(?:\([^)]*\))?\s*\([\d]{4}-[\d]{2}-[\d]{2}\)[^\n]*\n*/;
+
+// Pure helper exported for testing. Strips the leading "X.Y.Z (Date)"
+// heading produced by release-notes-generator and left-trims any leading
+// blank lines that would push the rendered HTML down.
+export function sanitizeReleaseNotes(notes) {
+    if (notes == null) return "";
+    // Trim FIRST so the version-heading regex anchors at line start even
+    // when release-notes-generator emits a leading blank line. Then strip
+    // the heading. Then trim again to collapse the gap that the heading
+    // removal left behind.
+    let cleaned = notes.replace(/^[\s\n]+/, "");
+    cleaned = cleaned.replace(VERSION_HEADING_LINE, "");
+    cleaned = cleaned.replace(/^[\s\n]+/, "");
+    return cleaned;
+}
+
 // Pure helper exported for testing. Returns { markdownPath, htmlPath, html }.
 // `notes` is the markdown body produced by release-notes-generator. When the
 // release is a no-op (notes is null/undefined/empty), we still write empty
@@ -28,7 +53,7 @@ export async function writeChangelogFiles(notes, {
 } = {}) {
     const mdAbs = resolve(cwd, markdownPath);
     const htmlAbs = resolve(cwd, htmlPath);
-    const markdown = notes ?? "";
+    const markdown = sanitizeReleaseNotes(notes);
     // marked's GFM defaults: tables, autolinks, task lists — all fine for
     // changelog content.
     const html = marked.parse(markdown);
