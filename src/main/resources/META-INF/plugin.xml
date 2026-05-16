@@ -29,13 +29,18 @@
 
     <actions>
         <!-- "Save Decompiled Assembly as Project..." — see SaveAsProjectAction.kt.
-             Lives under Tools because that's where one-shot solution-scoped
-             utilities conventionally go (Tools | NuGet, Tools | XML Actions, etc.). -->
+             Lives on the right-click of any managed binary the user can already
+             see in the IDE: Solution Explorer references (assembly + project
+             refs), NuGet PackageReferences (also surface under the references
+             group), and the standalone Assembly Explorer. No Tools-menu entry
+             — the action's update() requires an in-context assembly, so a
+             menubar surface with no candidate would be permanently disabled. -->
         <action id="RiderIlSpy.SaveAsProjectAction"
                 class="com.cryptiklemur.riderilspy.SaveAsProjectAction"
                 text="Save Decompiled Assembly as Project..."
-                description="Decompile a managed .dll or .exe to a buildable C# project tree using ILSpy.">
-            <add-to-group group-id="ToolsMenu" anchor="last"/>
+                description="Decompile this managed .dll or .exe to a buildable C# project tree using ILSpy.">
+            <add-to-group group-id="SolutionExplorerPopupMenuForReference" anchor="last"/>
+            <add-to-group group-id="AssemblyExplorerPopupMenu" anchor="last"/>
         </action>
     </actions>
 </idea-plugin>
