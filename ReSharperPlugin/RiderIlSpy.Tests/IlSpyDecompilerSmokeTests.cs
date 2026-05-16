@@ -31,10 +31,19 @@ public class IlSpyDecompilerSmokeTests
     {
         IlSpyDecompiler decompiler = new IlSpyDecompiler();
         DecompilerSettings settings = new DecompilerSettings();
-        string output = decompiler.DecompileType(TestAssemblyPath, FixtureTypeName, settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp);
+        DecompileResult result = decompiler.DecompileType(TestAssemblyPath, FixtureTypeName, settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp);
+        string output = result.Content;
+        Assert.True(result.Success);
+        Assert.Null(result.FailureReason);
         Assert.False(string.IsNullOrEmpty(output));
-        Assert.Contains("IlSpyDecompilerSmokeTests", output);
-        Assert.Contains("class", output); // class keyword present
+        // Discriminating C# fixture signals: namespace declaration AND class header
+        // AND a method we control (DecompileType_csharp_mode_emits_recognizable_source
+        // is the test we're running — it must appear in its own decompiled source).
+        Assert.Matches(new Regex(@"namespace\s+RiderIlSpy\.Tests"), output);
+        Assert.Matches(new Regex(@"\bclass\s+IlSpyDecompilerSmokeTests\b"), output);
+        Assert.Contains("DecompileType_csharp_mode_emits_recognizable_source", output);
+        // Negative: IL-only markers must NOT appear in pure CSharp mode.
+        Assert.DoesNotMatch(new Regex(@"^IL_[0-9a-fA-F]+:", RegexOptions.Multiline), output);
     }
 
     [Fact]
@@ -42,11 +51,17 @@ public class IlSpyDecompilerSmokeTests
     {
         IlSpyDecompiler decompiler = new IlSpyDecompiler();
         DecompilerSettings settings = new DecompilerSettings();
-        string output = decompiler.DecompileType(TestAssemblyPath, FixtureTypeName, settings, extraSearchDirs: null, mode: IlSpyOutputMode.IL);
+        DecompileResult result = decompiler.DecompileType(TestAssemblyPath, FixtureTypeName, settings, extraSearchDirs: null, mode: IlSpyOutputMode.IL);
+        string output = result.Content;
+        Assert.True(result.Success);
         Assert.False(string.IsNullOrEmpty(output));
-        // ILSpy IL disassembler emits ".method", "IL_xxxx:" offset markers, and
-        // ".class" headers — any of these is sufficient to confirm we're in IL mode.
-        Assert.True(output.Contains(".method") || output.Contains(".class") || output.Contains("IL_"));
+        // ILSpy IL disassembler must emit ALL THREE: .method directive, .class
+        // header, and IL_xxxx: offset labels — that's the IL grammar surface a
+        // user expects. Single-marker tolerance previously let partial output
+        // pass silently.
+        Assert.Matches(new Regex(@"\.method\b"), output);
+        Assert.Matches(new Regex(@"\.class\b"), output);
+        Assert.Matches(new Regex(@"\bIL_[0-9a-fA-F]+:"), output);
     }
 
     [Fact]
@@ -54,25 +69,38 @@ public class IlSpyDecompilerSmokeTests
     {
         IlSpyDecompiler decompiler = new IlSpyDecompiler();
         DecompilerSettings settings = new DecompilerSettings();
-        string output = decompiler.DecompileType(TestAssemblyPath, FixtureTypeName, settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharpWithIL);
+        DecompileResult result = decompiler.DecompileType(TestAssemblyPath, FixtureTypeName, settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharpWithIL);
+        string output = result.Content;
+        Assert.True(result.Success);
         Assert.False(string.IsNullOrEmpty(output));
-        // Mixed mode runs MixedMethodBodyDisassembler — output should carry both
-        // C# fragments AND IL-style markers ("IL_" offset labels or ldarg/ret opcodes).
-        Assert.Contains("IlSpyDecompilerSmokeTests", output);
-        Assert.True(output.Contains("IL_") || output.Contains("ldarg") || output.Contains("ret"));
+        // Mixed mode must emit both flavors — the whole point is to interleave
+        // C# (as a comment) above IL. Require all three signals so a regression
+        // to single-format output trips the test: IL grammar (.method + IL_:
+        // offset labels) AND woven C# comment lines (the mixed disassembler
+        // prefixes decompiled source lines with "// " between IL instructions).
+        Assert.Matches(new Regex(@"\.method\b"), output);
+        Assert.Matches(new Regex(@"\bIL_[0-9a-fA-F]+:"), output);
+        Assert.Matches(new Regex(@"^\s*//\s+", RegexOptions.Multiline), output);
+        // The IL .class header carries the fully-qualified type name (with the
+        // RiderIlSpy.Tests namespace inlined as part of the IL identifier).
+        Assert.Matches(new Regex(@"\.class\b[^\n]*\bIlSpyDecompilerSmokeTests\b"), output);
     }
 
     [Fact]
-    public void DecompileType_unknown_type_returns_empty_or_marker_string()
+    public void DecompileType_unknown_type_returns_not_found_marker_not_real_source()
     {
-        // Negative path: a type that does not exist in the assembly. ILSpy
-        // generally emits nothing or a synthetic marker rather than crashing.
+        // Negative path: a type that does not exist in the assembly. ILSpy's
+        // resolver returns a "Type not found: <name>" marker rather than
+        // throwing or emitting a real class body. Pin the marker shape so a
+        // regression to either a thrown exception (would surface as
+        // FailureReason != null) or a fabricated class body trips the test.
         IlSpyDecompiler decompiler = new IlSpyDecompiler();
         DecompilerSettings settings = new DecompilerSettings();
-        string output = decompiler.DecompileType(TestAssemblyPath, "RiderIlSpy.Tests.DefinitelyDoesNotExist", settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp);
-        // We don't assert on exact contents — just that the call returns
-        // without throwing and produces a string.
-        Assert.NotNull(output);
+        DecompileResult result = decompiler.DecompileType(TestAssemblyPath, "RiderIlSpy.Tests.DefinitelyDoesNotExist", settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp);
+        Assert.NotNull(result.Content);
+        Assert.Matches(new Regex(@"not found", RegexOptions.IgnoreCase), result.Content);
+        // No fabricated class declaration for the non-existent type.
+        Assert.DoesNotMatch(new Regex(@"\bclass\s+DefinitelyDoesNotExist\b"), result.Content);
     }
 
     // These tests target the pure helper (IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata)
@@ -114,7 +142,7 @@ public class IlSpyDecompilerSmokeTests
         {
             UsePrimaryConstructorSyntax = false,
         };
-        string output = decompiler.DecompileType(TestAssemblyPath, "RiderIlSpy.Tests.BugTwoRecordFixture", settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp);
+        string output = decompiler.DecompileType(TestAssemblyPath, "RiderIlSpy.Tests.BugTwoRecordFixture", settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp).Content;
         Assert.False(string.IsNullOrEmpty(output));
         // With primary ctor syntax disabled, ILSpy must emit explicit property
         // declarations (with an accessor block) for the record's components.
@@ -134,7 +162,7 @@ public class IlSpyDecompilerSmokeTests
         IlSpyDecompiler decompiler = new IlSpyDecompiler();
         DecompilerSettings settings = new DecompilerSettings();
         settings.SetLanguageVersion(LanguageVersion.CSharp7_3);
-        string output = decompiler.DecompileType(TestAssemblyPath, "RiderIlSpy.Tests.BugTwoRecordFixture", settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp);
+        string output = decompiler.DecompileType(TestAssemblyPath, "RiderIlSpy.Tests.BugTwoRecordFixture", settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp).Content;
         Assert.False(string.IsNullOrEmpty(output));
         // `\brecord\s+(class|struct)\b` would match positional or non-positional
         // record syntax; both must be absent at the 7.3 target.
@@ -151,7 +179,7 @@ public class IlSpyDecompilerSmokeTests
         DecompilerSettings settings = new DecompilerSettings();
         // Latest is the default — being explicit here documents intent.
         settings.SetLanguageVersion(LanguageVersion.Latest);
-        string output = decompiler.DecompileType(TestAssemblyPath, "RiderIlSpy.Tests.BugTwoRecordFixture", settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp);
+        string output = decompiler.DecompileType(TestAssemblyPath, "RiderIlSpy.Tests.BugTwoRecordFixture", settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp).Content;
         Assert.False(string.IsNullOrEmpty(output));
         Assert.Matches(new Regex(@"\brecord\s+struct\b"), output);
     }
@@ -167,7 +195,7 @@ public class IlSpyDecompilerSmokeTests
         {
             UsePrimaryConstructorSyntax = true,
         };
-        string output = decompiler.DecompileType(TestAssemblyPath, "RiderIlSpy.Tests.BugTwoRecordFixture", settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp);
+        string output = decompiler.DecompileType(TestAssemblyPath, "RiderIlSpy.Tests.BugTwoRecordFixture", settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp).Content;
         Assert.False(string.IsNullOrEmpty(output));
         // Positional record-struct syntax: `record struct BugTwoRecordFixture(int Bar, string Baz)`.
         // The components must appear inside the type's parameter list, NOT as

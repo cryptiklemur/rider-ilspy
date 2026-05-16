@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
@@ -9,8 +8,6 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using ICSharpCode.Decompiler;
-using ICSharpCode.Decompiler.CSharp;
 using JetBrains.Application.Parts;
 using JetBrains.Application.Progress;
 using JetBrains.Application.Settings;
@@ -23,7 +20,6 @@ using JetBrains.ProjectModel;
 using JetBrains.ProjectModel.Model2.Assemblies.Interfaces;
 using JetBrains.Rd;
 using JetBrains.Rd.Base;
-using JetBrains.Rd.Tasks;
 using JetBrains.ReSharper.Feature.Services.ExternalSource;
 using JetBrains.ReSharper.Feature.Services.ExternalSources.Core;
 using JetBrains.ReSharper.Feature.Services.ExternalSources.Utils;
@@ -39,77 +35,54 @@ namespace RiderIlSpy;
 [SolutionComponent(Instantiation.DemandAnyThreadSafe)]
 public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
 {
-    private const string DecompilerIdConst = "RiderIlSpy";
-    private const int MaxTrackedTypes = 512;
+    private const string DecompilerId = "RiderIlSpy";
 
     private static readonly ILogger ourLogger = Logger.GetLogger<IlSpyExternalSourcesProvider>();
 
     private readonly INavigationDecompilationCache myCache;
     private readonly IlSpyDecompiler myDecompiler;
+    private readonly IlSpySourceLinkGateway mySourceLinkGateway;
     private readonly IContextBoundSettingsStoreLive mySettings;
     private readonly IShellLocks myShellLocks;
     private readonly Lifetime myLifetime;
-    private readonly ConcurrentDictionary<string, TypeDecompileEntry> myEntries = new ConcurrentDictionary<string, TypeDecompileEntry>();
-    private readonly object myEntriesAccessLock = new object();
-    private readonly LinkedList<string> myEntriesOrder = new LinkedList<string>();
+    private readonly TypeEntryCache myEntryCache = new TypeEntryCache();
+    private readonly IlSpyRequestSettingsBuilder mySettingsBuilder;
     private readonly RiderIlSpyModel myRiderIlSpyModel;
-    private CancellationTokenSource? myActiveRedecompileCts;
-    private readonly object myRedecompileLock = new object();
+    private readonly ModeChangeRedecompiler myModeChangeRedecompiler;
 
-    public IlSpyExternalSourcesProvider(Lifetime lifetime, ISolution solution, ISettingsStore settingsStore, INavigationDecompilationCache cache, IlSpyDecompiler decompiler, IShellLocks shellLocks)
+    public IlSpyExternalSourcesProvider(
+        Lifetime lifetime,
+        ISolution solution,
+        ISettingsStore settingsStore,
+        INavigationDecompilationCache cache,
+        IlSpyDecompiler decompiler,
+        IlSpySourceLinkGateway sourceLinkGateway,
+        IShellLocks shellLocks)
     {
         myCache = cache;
         myDecompiler = decompiler;
+        mySourceLinkGateway = sourceLinkGateway;
         myShellLocks = shellLocks;
         myLifetime = lifetime;
         mySettings = settingsStore.BindToContextLive(lifetime, ContextRange.ApplicationWide);
+        mySettingsBuilder = new IlSpyRequestSettingsBuilder(mySettings, ourLogger);
         myRiderIlSpyModel = solution.GetProtocolSolution().GetRiderIlSpyModel();
-        myRiderIlSpyModel.Mode.Advise(lifetime, OnRiderIlSpyModeChanged);
-        // Endpoint for "Save Decompiled Assembly as Project..." — frontend kotlin
-        // action calls this via the rd protocol. SetSync runs the handler on the
-        // protocol thread; the kotlin side wraps the call in a backgroundable
-        // progress task so the IDE stays responsive while ILSpy churns.
-        myRiderIlSpyModel.SaveAsProject.SetSync(OnSaveAsProjectRequest);
-    }
-
-    /// <summary>
-    /// rd handler for <see cref="RiderIlSpyModel"/>.SaveAsProject. Wraps
-    /// <see cref="IlSpyDecompiler.DecompileAssemblyToProject"/> and reports either
-    /// a successful summary or an error message back across the protocol. Never
-    /// throws to the rd layer — exceptions become <c>success=false</c> responses
-    /// so the kotlin action can render them as a notification.
-    /// </summary>
-    private SaveAsProjectResponse OnSaveAsProjectRequest(Lifetime _, SaveAsProjectRequest request)
-    {
-        try
-        {
-            DecompilerSettings settings = BuildDecompilerSettings();
-            IReadOnlyList<string> extraDirs = GetExtraSearchDirs();
-            DecompileAssemblyToProjectResult result = myDecompiler.DecompileAssemblyToProject(
-                request.AssemblyPath,
-                request.TargetDirectory,
-                settings,
-                extraDirs,
-                CancellationToken.None);
-            return new SaveAsProjectResponse(
-                success: true,
-                projectFilePath: result.ProjectFilePath ?? "",
-                csharpFileCount: result.CSharpFileCount,
-                errorMessage: "");
-        }
-        catch (System.Exception ex)
-        {
-            ourLogger.Error(ex, "RiderIlSpy.SaveAsProject failed for " + request.AssemblyPath);
-            return new SaveAsProjectResponse(
-                success: false,
-                projectFilePath: "",
-                csharpFileCount: 0,
-                errorMessage: ex.Message ?? ex.GetType().Name);
-        }
+        // Mode-change choreography (debounce + cancel-supersede + protocol-thread
+        // readyTick fire) lives in ModeChangeRedecompiler so this ctor's
+        // responsibilities stay limited to wiring rd subscriptions.
+        myModeChangeRedecompiler = new ModeChangeRedecompiler(
+            RedecompileAllEntriesAsync,
+            FireReadyTickOnProtocolThread,
+            ourLogger.Verbose,
+            ourLogger.Error);
+        myRiderIlSpyModel.Mode.Advise(lifetime, myModeChangeRedecompiler.OnModeChanged);
+        // Save-as-project rd handler moved to SaveAsProjectProtocolHandler — it
+        // owns its own [SolutionComponent] subscription so the navigation
+        // provider doesn't pull in the protocol-handler concern.
     }
 
     public string PresentableShortName => "ILSpy";
-    public string Id => DecompilerIdConst;
+    public string Id => DecompilerId;
     public int Priority => 100;
 
     public bool IsApplicableForNavigation(CompiledElementNavigationInfo? navigationInfo, bool ignoreOptions)
@@ -127,55 +100,9 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         return mySettings.GetValue((IlSpySettings s) => s.Enabled);
     }
 
-    private DecompilerSettings BuildDecompilerSettings()
-    {
-        DecompilerSettings settings = new DecompilerSettings
-        {
-            ThrowOnAssemblyResolveErrors = mySettings.GetValue((IlSpySettings s) => s.ThrowOnAssemblyResolveErrors),
-            AsyncAwait = mySettings.GetValue((IlSpySettings s) => s.AsyncAwait),
-            UseExpressionBodyForCalculatedGetterOnlyProperties = mySettings.GetValue((IlSpySettings s) => s.ExpressionBodies),
-            NamedArguments = mySettings.GetValue((IlSpySettings s) => s.NamedArguments),
-            ShowXmlDocumentation = mySettings.GetValue((IlSpySettings s) => s.ShowXmlDocumentation),
-            RemoveDeadCode = mySettings.GetValue((IlSpySettings s) => s.RemoveDeadCode),
-            UsePrimaryConstructorSyntax = mySettings.GetValue((IlSpySettings s) => s.UsePrimaryConstructorSyntax),
-        };
-        // Apply language-version downgrade after construction so unspecified
-        // (Latest) leaves ILSpy's defaults untouched. SetLanguageVersion
-        // flips multiple feature flags (RecordClasses, InitAccessors, ...)
-        // to match the target version's capability set.
-        IlSpyLanguageVersion languageVersion = mySettings.GetValue((IlSpySettings s) => s.LanguageVersion);
-        if (languageVersion != IlSpyLanguageVersion.Latest)
-        {
-            settings.SetLanguageVersion((LanguageVersion)(int)languageVersion);
-        }
-        return settings;
-    }
-
-    private IReadOnlyList<string> GetExtraSearchDirs()
-    {
-        string raw = mySettings.GetValue((IlSpySettings s) => s.AssemblyResolveDirs) ?? "";
-        if (raw.Length == 0) return Array.Empty<string>();
-        string[] parts = raw.Split(';', StringSplitOptions.RemoveEmptyEntries);
-        List<string> result = new List<string>(parts.Length);
-        foreach (string part in parts)
-        {
-            if (TryNormalizeSearchDir(part, out string canonical, out string? rejection))
-            {
-                result.Add(canonical);
-            }
-            else if (rejection != null)
-            {
-                ourLogger.Warn(rejection);
-            }
-        }
-        return result;
-    }
-
-    // Delegates to IlSpyExternalSourcesProviderHelpers.TryNormalizeSearchDir
-    // — kept here as a thin wrapper so the call site stays local to the
-    // foreach and the helper class can be tested without ReSharper SDK load.
-    private static bool TryNormalizeSearchDir(string raw, out string canonical, out string? rejection)
-        => IlSpyExternalSourcesProviderHelpers.TryNormalizeSearchDir(raw, out canonical, out rejection);
+    // BuildDecompilerSettings, GetExtraSearchDirs, and the TryNormalizeSearchDir
+    // wrapper moved to IlSpyRequestSettingsBuilder so the SaveAsProjectProtocolHandler
+    // can share the exact settings-build pipeline without duplicating reads.
 
     public ExternalSourcesMapping? MapFileToAssembly(FileSystemPath file)
     {
@@ -192,8 +119,8 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         {
             TypeDecompileEntry? entry = TryParseEntry(item.Properties, item.Assembly);
             if (entry == null) return;
-            if (myEntries.ContainsKey(entry.Moniker)) return;
-            TrackEntry(entry.Moniker, entry);
+            if (myEntryCache.Contains(entry.Moniker)) return;
+            myEntryCache.Track(entry.Moniker, entry);
         }
         catch (Exception ex)
         {
@@ -213,20 +140,18 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         return NavigateToSources(navigationInfo.ElementToSearchIn, taskExecutor);
     }
 
-    public ExtendedDebugData? GetTypeDebugData(ICompiledElement type, ITaskExecutor taskExecutor)
-    {
-        return null;
-    }
+    // RiderIlSpy doesn't synthesize a PDB for its decompiled output — ILSpy emits
+    // source text, not portable debug info. ExtendedDebugData would need line-mapping
+    // back to the original assembly's PDB, which we don't track per cache entry.
+    // The honest contract is "we have nothing extra to offer here". Returning false
+    // from IsPreferredForGettingDebugData lets Rider fall back to the platform's
+    // default debug-data flow for our cached files rather than wasting a call into
+    // GetTypeDebugData / GetSourceDebugData that will always answer null.
+    public ExtendedDebugData? GetTypeDebugData(ICompiledElement type, ITaskExecutor taskExecutor) => null;
 
-    public ExtendedDebugData? GetSourceDebugData(FileSystemPath file)
-    {
-        return null;
-    }
+    public ExtendedDebugData? GetSourceDebugData(FileSystemPath file) => null;
 
-    public bool IsPreferredForGettingDebugData(FileSystemPath file)
-    {
-        return myCache.CanBeCachedFile(Id, file);
-    }
+    public bool IsPreferredForGettingDebugData(FileSystemPath file) => false;
 
     private DecompilationCacheItem? DecompileToCacheItem(ICompiledElement compiledElement, ITaskExecutor taskExecutor)
     {
@@ -238,15 +163,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             IAssembly? assembly = top.Module.ContainingProjectModule as IAssembly;
             if (assembly == null) return null;
 
-            FileSystemPath? assemblyFile = null;
-            foreach (IAssemblyFile candidate in assembly.GetFiles())
-            {
-                FileSystemPath? candidatePath = candidate.Location.AssemblyPhysicalPath?.ToNativeFileSystemPath();
-                if (candidatePath == null || candidatePath.IsEmpty || !candidatePath.ExistsFile) continue;
-                bool isRef = candidatePath.FullPath.Contains("/ref/") || candidatePath.FullPath.Contains("\\ref\\") || candidatePath.FullPath.Contains(".ref/");
-                if (assemblyFile == null) assemblyFile = candidatePath;
-                if (!isRef) { assemblyFile = candidatePath; break; }
-            }
+            FileSystemPath? assemblyFile = ResolveAssemblyFile(assembly);
             if (assemblyFile == null) return null;
 
             IClrTypeName? clrName = top.GetClrName();
@@ -254,72 +171,38 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             string fullName = clrName.FullName;
             if (string.IsNullOrEmpty(fullName)) return null;
 
-            IlSpyOutputMode mode = ResolveEffectiveMode();
+            IlSpyRequestSettings request = SnapshotRequestSettings();
             string moniker = MonikerUtil.GetTypeCacheMoniker(top);
             string fileName = (top.ShortName ?? "Decompiled") + ".cs";
 
-            myEntries.TryGetValue(moniker, out TypeDecompileEntry? trackedEntry);
-            bool sameMode = trackedEntry != null && trackedEntry.Mode == mode;
+            TypeDecompileEntry? trackedEntry = myEntryCache.TryGet(moniker);
+            bool sameMode = trackedEntry != null && trackedEntry.Mode == request.Mode;
             DecompilationCacheItem? cached = myCache.GetCacheItem(Id, assembly, moniker, fileName);
             if (cached != null && !cached.Expired && sameMode) return cached;
 
-            DecompilerSettings decompilerSettings = BuildDecompilerSettings();
-            IReadOnlyList<string> extraSearchDirs = GetExtraSearchDirs();
-            bool showBanner = mySettings.GetValue((IlSpySettings s) => s.ShowDiagnosticBanner);
-            bool preferSourceLink = mySettings.GetValue((IlSpySettings s) => s.PreferSourceLink);
-            int sourceLinkTimeout = mySettings.GetValue((IlSpySettings s) => s.SourceLinkTimeoutSeconds);
+            DecompileFetchOutcome? fetch = FetchDecompiledContent(
+                assemblyFile.FullPath,
+                fullName,
+                taskTitle: "Decompiling " + top.ShortName + " with ILSpy",
+                request,
+                taskExecutor);
+            if (fetch == null) return null;
 
-            string content = string.Empty;
-            bool fromSourceLink = false;
-            // SourceLink fetch status — surfaced in the banner so users can tell
-            // why we fell back to ILSpy without grepping idea.log. Stays at
-            // "disabled" or "skipped-mode" when we never even attempt the fetch.
-            string sourceLinkStatus = preferSourceLink
-                ? (mode == IlSpyOutputMode.CSharp ? "not-attempted" : "skipped-mode")
-                : "disabled";
-            using ManualResetEventSlim doneSignal = new ManualResetEventSlim(false);
-            taskExecutor.ExecuteTask("Decompiling " + top.ShortName + " with ILSpy", TaskCancelable.Yes, _ =>
-            {
-                try
-                {
-                    // SourceLink fallback only applies to plain C# output. IL
-                    // and mixed-mode views need ILSpy's disassembler regardless
-                    // of how good the SourceLink source is.
-                    if (preferSourceLink && mode == IlSpyOutputMode.CSharp)
-                    {
-                        IlSpyDecompiler.SourceLinkAttempt attempt = myDecompiler.FetchSourceLink(assemblyFile.FullPath, fullName, sourceLinkTimeout);
-                        sourceLinkStatus = attempt.Status;
-                        if (attempt.Content != null)
-                        {
-                            content = attempt.Content;
-                            fromSourceLink = true;
-                            return;
-                        }
-                    }
-                    content = myDecompiler.DecompileType(assemblyFile.FullPath, fullName, decompilerSettings, extraSearchDirs, mode);
-                }
-                finally
-                {
-                    doneSignal.Set();
-                }
-            });
-
-            if (!doneSignal.Wait(TimeSpan.FromMinutes(2))) return null;
-
+            string content = fetch.Content;
             // Banner is only meaningful for ILSpy output. SourceLink already
             // returns the upstream file verbatim — prepending decompile
             // diagnostics there would just shift the real line numbers down
             // (annoying for "go to line N" navigation) without adding signal.
-            if (!fromSourceLink)
+            if (!fetch.FromSourceLink)
             {
-                AssemblyBannerMetadata? bannerMeta = showBanner ? myDecompiler.GetAssemblyBannerMetadata(assemblyFile.FullPath) : null;
-                content = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(showBanner, bannerMeta, assemblyFile.FullPath, fullName, mode, extraSearchDirs, sourceLinkStatus, content);
+                AssemblyBannerMetadata? bannerMeta = request.ShowBanner ? ReadBannerMetadata(assemblyFile.FullPath) : null;
+                BannerContext bannerCtx = new BannerContext(bannerMeta, assemblyFile.FullPath, fullName, request.Mode, request.ExtraSearchDirs);
+                content = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(request.ShowBanner, bannerCtx, fetch.SourceLinkOutcome, content);
             }
-            IDictionary<string, string> properties = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(mode, assemblyFile.FullPath, fullName, moniker, fileName);
-            DecompilationCacheItem? result = myCache.PutCacheItem(Id, assembly, moniker, fileName, properties, content, sourceDebugData: null);
+            DecompilationCacheItem? result = WriteToCache(assembly, assemblyFile.FullPath, fullName, moniker, fileName, request.Mode, content);
             if (result != null)
             {
-                TrackEntry(moniker, new TypeDecompileEntry(assembly, assemblyFile.FullPath, fullName, moniker, fileName, mode));
+                myEntryCache.Track(moniker, new TypeDecompileEntry(assembly, assemblyFile.FullPath, fullName, moniker, fileName, request.Mode));
             }
             return result;
         }
@@ -330,38 +213,162 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         }
     }
 
-    private void TrackEntry(string moniker, TypeDecompileEntry entry)
+    /// <summary>
+    /// Picks the on-disk assembly file for <paramref name="assembly"/>, preferring
+    /// the implementation assembly over reference assemblies (the `/ref/` path
+    /// segment is the standard SDK marker for ref-only assemblies). Reference
+    /// assemblies contain no IL bodies, so decompiling one yields stubs with empty
+    /// method bodies — useless for source navigation. Falls back to the first
+    /// existing file when only ref assemblies are present, so we at least return
+    /// stubs instead of null.
+    /// </summary>
+    private static FileSystemPath? ResolveAssemblyFile(IAssembly assembly)
     {
-        lock (myEntriesAccessLock)
+        FileSystemPath? assemblyFile = null;
+        foreach (IAssemblyFile candidate in assembly.GetFiles())
         {
-            if (myEntries.ContainsKey(moniker))
-            {
-                myEntriesOrder.Remove(moniker);
-            }
-            myEntries[moniker] = entry;
-            myEntriesOrder.AddLast(moniker);
-            while (myEntriesOrder.Count > MaxTrackedTypes)
-            {
-                LinkedListNode<string>? first = myEntriesOrder.First;
-                if (first == null) break;
-                myEntriesOrder.RemoveFirst();
-                myEntries.TryRemove(first.Value, out _);
-            }
+            FileSystemPath? candidatePath = candidate.Location.AssemblyPhysicalPath?.ToNativeFileSystemPath();
+            if (candidatePath == null || candidatePath.IsEmpty || !candidatePath.ExistsFile) continue;
+            bool isRef = candidatePath.FullPath.Contains("/ref/") || candidatePath.FullPath.Contains("\\ref\\") || candidatePath.FullPath.Contains(".ref/");
+            if (assemblyFile == null) assemblyFile = candidatePath;
+            if (!isRef) { assemblyFile = candidatePath; break; }
         }
+        return assemblyFile;
     }
 
-    // Inverse of BuildCacheProperties — returns null when any required key is
-    // missing or the mode is unparseable.
+    /// <summary>
+    /// Runs the SourceLink-then-ILSpy fetch on the background task executor and
+    /// blocks the calling thread (with a 2-minute ceiling) until the task signals
+    /// completion. Returns null when the wait times out so the caller can surface
+    /// "decompile abandoned" rather than caching an empty result. Bundles the
+    /// three outputs (text, fromSourceLink flag, typed SourceLink outcome) into
+    /// <see cref="DecompileFetchOutcome"/> so DecompileToCacheItem doesn't have
+    /// to thread four parallel locals through a closure.
+    /// </summary>
+    // Initial SourceLink outcome before any HTTP attempt — captures which
+    // branch we'll take so the banner can explain *why* SourceLink didn't
+    // contribute when it didn't (Disabled by setting / SkippedMode for non-C# /
+    // NotAttempted while the fetch is still pending). Extracted out of the
+    // FetchDecompiledContent prologue so the nested ternary doesn't obscure
+    // the more interesting work that follows it.
+    private static SourceLinkOutcome InitialSourceLinkOutcome(bool preferSourceLink, IlSpyOutputMode mode)
+    {
+        if (!preferSourceLink) return SourceLinkOutcome.Plain(SourceLinkStatus.Disabled);
+        if (mode != IlSpyOutputMode.CSharp) return SourceLinkOutcome.Plain(SourceLinkStatus.SkippedMode);
+        return SourceLinkOutcome.Plain(SourceLinkStatus.NotAttempted);
+    }
+
+    private DecompileFetchOutcome? FetchDecompiledContent(
+        string assemblyPath,
+        string typeFullName,
+        string taskTitle,
+        IlSpyRequestSettings request,
+        ITaskExecutor taskExecutor)
+    {
+        SourceLinkOutcome initialOutcome = InitialSourceLinkOutcome(request.PreferSourceLink, request.Mode);
+        // Single bundled result holder — the worker writes one immutable
+        // DecompileFetchOutcome and we read it once after Wait. Replaces the
+        // prior pattern of three parallel closure mutables (content,
+        // fromSourceLink, sourceLinkOutcome) being mutated independently and
+        // re-bundled at the bottom. Reduces the lambda's shared-state surface
+        // to one nullable reference.
+        DecompileFetchOutcome? result = null;
+        // CTS is hoisted out of the lambda so the wait-side can cancel the
+        // worker on timeout. Previously the cts was scoped to the lambda, so
+        // when Wait(2 min) returned false the worker kept running and kept
+        // mutating closure state we no longer cared about. Sharing the cts
+        // gives the wait-side its one escape hatch to abort the in-flight
+        // SourceLink HTTP fetch / DecompileType call.
+        using CancellationTokenSource cts = new CancellationTokenSource();
+        using ManualResetEventSlim doneSignal = new ManualResetEventSlim(false);
+        taskExecutor.ExecuteTask(taskTitle, TaskCancelable.Yes, progress =>
+        {
+            // Bridge the platform's IProgressIndicator.IsCanceled poll into the
+            // shared CancellationToken so FetchSourceLink's HTTP fetch is
+            // actually cancellable via Rider's task cancel button (previously
+            // the token parameter existed end-to-end but no caller ever passed
+            // a live one).
+            using Timer cancelPoll = new Timer(_ =>
+            {
+                if (progress.IsCanceled)
+                {
+                    try { cts.Cancel(); } catch (ObjectDisposedException) { /* benign race with disposal */ }
+                }
+            }, null, dueTime: 100, period: 100);
+            try
+            {
+                SourceLinkOutcome outcome = initialOutcome;
+                if (request.PreferSourceLink && request.Mode == IlSpyOutputMode.CSharp)
+                {
+                    SourceLinkAttempt attempt = mySourceLinkGateway.Fetch(assemblyPath, typeFullName, request.SourceLinkTimeoutSeconds, cts.Token);
+                    outcome = attempt.Outcome;
+                    if (attempt.Content != null)
+                    {
+                        result = new DecompileFetchOutcome(attempt.Content, FromSourceLink: true, outcome);
+                        return;
+                    }
+                }
+                string content = myDecompiler.DecompileType(assemblyPath, typeFullName, request.DecompilerSettings, request.ExtraSearchDirs, request.Mode).Content;
+                result = new DecompileFetchOutcome(content, FromSourceLink: false, outcome);
+            }
+            finally
+            {
+                doneSignal.Set();
+            }
+        });
+        if (!doneSignal.Wait(TimeSpan.FromMinutes(2)))
+        {
+            // Worker is still running — signal it to stop so it doesn't keep
+            // burning CPU on a result we can't use. Caller gets null and the
+            // navigation surface reports "decompile abandoned". Without this
+            // the lambda would run to completion and silently mutate `result`
+            // long after we've already returned null to the caller.
+            try { cts.Cancel(); } catch (ObjectDisposedException) { /* benign race with disposal */ }
+            return null;
+        }
+        return result;
+    }
+
+    // Banner-metadata seam that adds Warn-on-null logging around the SDK-free
+    // IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata helper.
+    // Inlined here (rather than living on IlSpyDecompiler) because the warning
+    // is a navigation-surface concern — the decompiler shouldn't grow a
+    // logging-only shim for a helper that doesn't touch ICSharpCode.Decompiler.
+    private AssemblyBannerMetadata? ReadBannerMetadata(string assemblyPath)
+    {
+        AssemblyBannerMetadata? result = IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata(assemblyPath);
+        if (result == null && File.Exists(assemblyPath))
+            ourLogger.Warn("RiderIlSpy.ReadBannerMetadata returned null for " + assemblyPath);
+        return result;
+    }
+
+    /// <summary>
+    /// Writes the decompiled <paramref name="content"/> into Rider's navigation
+    /// cache, identified by the (assembly, moniker, fileName) triple.
+    /// <see cref="IlSpyExternalSourcesProviderHelpers.BuildCacheProperties"/> returns
+    /// a concrete <c>Dictionary&lt;,&gt;</c> so we pass it straight to
+    /// PutCacheItem's IDictionary parameter — no cast or interface gymnastics needed.
+    /// </summary>
+    private DecompilationCacheItem? WriteToCache(IAssembly assembly, string assemblyPath, string typeFullName, string moniker, string fileName, IlSpyOutputMode mode, string content)
+    {
+        Dictionary<string, string> properties = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(mode, assemblyPath, typeFullName, moniker, fileName);
+        return myCache.PutCacheItem(Id, assembly, moniker, fileName, properties, content, sourceDebugData: null);
+    }
+
+    // TrackEntry / LRU cache moved to TypeEntryCache.cs — the provider holds an
+    // instance via myEntryCache. Old fields (myEntries, myEntriesAccessLock,
+    // myEntriesOrder, MaxTrackedTypes) are gone.
+
+    // Provider-layer wrapper: delegates to the SDK-free
+    // IlSpyExternalSourcesProviderHelpers.TryParseDecompileEntryFields parser
+    // and attaches the IAssembly handle. Keeping the parse pure means the
+    // property-bag round-trip is unit-testable without standing up a JetBrains
+    // platform fixture.
     private static TypeDecompileEntry? TryParseEntry(IDictionary<string, string>? properties, IAssembly assembly)
     {
-        if (properties == null) return null;
-        if (!properties.TryGetValue("RiderIlSpy.Moniker", out string? moniker) || string.IsNullOrEmpty(moniker)) return null;
-        if (!properties.TryGetValue("RiderIlSpy.Assembly", out string? asmPath)) return null;
-        if (!properties.TryGetValue("RiderIlSpy.Type", out string? typeFullName)) return null;
-        if (!properties.TryGetValue("RiderIlSpy.FileName", out string? fileName)) return null;
-        if (!properties.TryGetValue("RiderIlSpy.Mode", out string? modeStr)) return null;
-        if (!Enum.TryParse(modeStr, out IlSpyOutputMode mode)) return null;
-        return new TypeDecompileEntry(assembly, asmPath, typeFullName, moniker, fileName, mode);
+        DecompileEntryFields? fields = IlSpyExternalSourcesProviderHelpers.TryParseDecompileEntryFields(properties);
+        if (fields == null) return null;
+        return new TypeDecompileEntry(assembly, fields.AssemblyFilePath, fields.TypeFullName, fields.Moniker, fields.FileName, fields.Mode);
     }
 
     private IlSpyOutputMode? ReadRdMode()
@@ -371,7 +378,8 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         // Wire strings are encoded as IlSpyOutputMode member names by the
         // kotlin frontend (see IlSpyMode.backendName). Single Enum.TryParse
         // covers all current modes and any future additions automatically.
-        return Enum.TryParse(current, out IlSpyOutputMode mode) ? mode : (IlSpyOutputMode?)null;
+        if (!Enum.TryParse(current, out IlSpyOutputMode mode)) return null;
+        return mode;
     }
 
     // Canonical mode-resolution seam: prefer the live wire value when present,
@@ -381,76 +389,39 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     private IlSpyOutputMode ResolveEffectiveMode()
         => ReadRdMode() ?? mySettings.GetValue((IlSpySettings s) => s.OutputMode);
 
-    private void OnRiderIlSpyModeChanged(string? newMode)
+    // Delegates the heavy lifting to IlSpyRequestSettingsBuilder, passing the
+    // navigation-path's resolved mode (rd-live preferred over persisted).
+    // Per-request snapshot guarantees the rest of the pass sees one consistent
+    // view even if a settings write lands mid-flight.
+    private IlSpyRequestSettings SnapshotRequestSettings() => mySettingsBuilder.Snapshot(ResolveEffectiveMode());
+
+    // RD signals must fire on the protocol's Shell Rd Dispatcher, never on a
+    // .NET thread-pool worker — firing from off-thread trips an assertion in
+    // rd's FrontendBackend and the readyTick is dropped, so the status-bar
+    // widget never sees the mode change complete. Queue() schedules the Fire
+    // onto the protocol scheduler regardless of which thread we're on.
+    // Kept on the provider (not the redecompiler) because it closes over
+    // myRiderIlSpyModel — the redecompiler stays SDK-decoupled by taking this
+    // as an Action delegate.
+    private void FireReadyTickOnProtocolThread()
     {
-        if (string.IsNullOrEmpty(newMode)) return;
-
-        CancellationTokenSource newCts = new CancellationTokenSource();
-        CancellationTokenSource? previous;
-        lock (myRedecompileLock)
-        {
-            previous = myActiveRedecompileCts;
-            myActiveRedecompileCts = newCts;
-        }
-        SafeCancelAndDispose(previous);
-
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(75, newCts.Token).ConfigureAwait(false);
-                await RedecompileAllEntriesAsync(newCts.Token).ConfigureAwait(false);
-                // RD signals must fire on the protocol's Shell Rd Dispatcher, never
-                // on a .NET thread-pool worker — firing from off-thread trips an
-                // assertion in rd's FrontendBackend and the readyTick is dropped,
-                // so the status-bar widget never sees the mode change complete.
-                // Queue() schedules the Fire onto the protocol scheduler regardless
-                // of which thread we end up on after the awaits above.
-                IProtocol? protocol = ((IRdDynamic)myRiderIlSpyModel).TryGetProto();
-                if (protocol != null)
-                    protocol.Scheduler.Queue(() => myRiderIlSpyModel.ReadyTick.Fire(DateTime.UtcNow.Ticks));
-            }
-            catch (OperationCanceledException)
-            {
-                // Superseded by a newer mode change; the next OnRiderIlSpyModeChanged will redrive the redecompile.
-                // Logging at Verbose only — frequent during rapid mode toggles, not actionable.
-                ourLogger.Verbose("RiderIlSpy.OnRiderIlSpyModeChanged: redecompile cancelled by newer mode change");
-            }
-            catch (Exception ex)
-            {
-                ourLogger.Error(ex, "RiderIlSpy.RedecompileAllEntries failed");
-            }
-            finally
-            {
-                lock (myRedecompileLock)
-                {
-                    if (ReferenceEquals(myActiveRedecompileCts, newCts))
-                        myActiveRedecompileCts = null;
-                }
-                SafeCancelAndDispose(newCts);
-            }
-        });
-    }
-
-    // Cancel + dispose a CancellationTokenSource while tolerating the
-    // ObjectDisposedException race with whichever task path got there first.
-    private static void SafeCancelAndDispose(CancellationTokenSource? cts)
-    {
-        if (cts == null) return;
-        try { cts.Cancel(); } catch (ObjectDisposedException) { /* already disposed by its task's finally */ }
-        try { cts.Dispose(); } catch (ObjectDisposedException) { /* already disposed by a concurrent cancel-and-swap path */ }
+        IProtocol? protocol = ((IRdDynamic)myRiderIlSpyModel).TryGetProto();
+        if (protocol != null)
+            protocol.Scheduler.Queue(() => myRiderIlSpyModel.ReadyTick.Fire(DateTime.UtcNow.Ticks));
     }
 
     private async Task RedecompileAllEntriesAsync(CancellationToken cancellationToken)
     {
-        if (myEntries.IsEmpty) return;
+        if (myEntryCache.IsEmpty) return;
 
-        IlSpyOutputMode mode = ResolveEffectiveMode();
-        DecompilerSettings decompilerSettings = BuildDecompilerSettings();
-        IReadOnlyList<string> extraSearchDirs = GetExtraSearchDirs();
-        bool showBanner = mySettings.GetValue((IlSpySettings s) => s.ShowDiagnosticBanner);
+        // One snapshot for the whole pass — concurrent settings writes can't
+        // slice mode-vs-banner-vs-search-dirs across iterations now.
+        IlSpyRequestSettings request = SnapshotRequestSettings();
 
-        foreach (KeyValuePair<string, TypeDecompileEntry> kv in myEntries)
+        // Snapshot the cache too so a concurrent Track call during this pass
+        // doesn't mutate the collection we're iterating. The redecompile is
+        // long-running; cache writes from new navigations are common.
+        foreach (KeyValuePair<string, TypeDecompileEntry> kv in myEntryCache.Snapshot())
         {
             cancellationToken.ThrowIfCancellationRequested();
             TypeDecompileEntry entry = kv.Value;
@@ -459,26 +430,32 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
                 // Decompilation is pure CPU work — keep it on the worker thread.
                 // The read lock is only needed for PutCacheItem below, which
                 // touches Rider's project-model-backed cache.
-                string content = myDecompiler.DecompileType(entry.AssemblyFilePath, entry.TypeFullName, decompilerSettings, extraSearchDirs, mode);
-                AssemblyBannerMetadata? bannerMeta = showBanner ? myDecompiler.GetAssemblyBannerMetadata(entry.AssemblyFilePath) : null;
-                content = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(showBanner, bannerMeta, entry.AssemblyFilePath, entry.TypeFullName, mode, extraSearchDirs, content);
+                string content = myDecompiler.DecompileType(entry.AssemblyFilePath, entry.TypeFullName, request.DecompilerSettings, request.ExtraSearchDirs, request.Mode).Content;
+                AssemblyBannerMetadata? bannerMeta = request.ShowBanner ? ReadBannerMetadata(entry.AssemblyFilePath) : null;
+                // Redecompile path doesn't re-attempt SourceLink — the toggle is between
+                // ILSpy output modes (C# / IL / Mixed). Use the no-outcome overload so
+                // we don't synthesize a placeholder SourceLinkOutcome just to indicate
+                // "we didn't try" — null already says that to the formatter.
+                BannerContext bannerCtx = new BannerContext(bannerMeta, entry.AssemblyFilePath, entry.TypeFullName, request.Mode, request.ExtraSearchDirs);
+                content = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(request.ShowBanner, bannerCtx, content);
 
-                IDictionary<string, string> properties = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(mode, entry.AssemblyFilePath, entry.TypeFullName, entry.Moniker, entry.FileName);
-
+                // Reuses the same WriteToCache helper as DecompileToCacheItem to
+                // keep the decompile -> banner -> cache pipeline single-sourced.
                 // PutCacheItem requires a reader lock (it walks the assembly's
-                // project-model entry). Holding ReadLockCookie.Create() across
-                // the call is the wrong primitive — Rider explicitly forbids it
-                // because it isn't interruptible during WriteLock acquisition.
-                // StartReadActionAsync schedules the call through the
-                // interruptible read-action path and returns a Task we can await.
-                TypeDecompileEntry capturedEntry = entry;
-                string capturedContent = content;
-                IDictionary<string, string> capturedProperties = properties;
+                // project-model entry); StartReadActionAsync is the interruptible
+                // path that respects WriteLock acquisition, so we wrap the
+                // synchronous WriteToCache call in it. The foreach variable is
+                // captured by the lambda — C# 5+ makes that capture per-iteration,
+                // so no explicit alias is needed.
                 await ReadActionUtil.StartReadActionAsync(
                     myShellLocks,
                     myLifetime,
-                    () => myCache.PutCacheItem(Id, capturedEntry.Assembly, capturedEntry.Moniker, capturedEntry.FileName, capturedProperties, capturedContent, sourceDebugData: null)).ConfigureAwait(false);
-                entry.Mode = mode;
+                    () => WriteToCache(entry.Assembly, entry.AssemblyFilePath, entry.TypeFullName, entry.Moniker, entry.FileName, request.Mode, content)).ConfigureAwait(false);
+                // TypeDecompileEntry is immutable — swap in a new entry with
+                // the updated Mode via TypeEntryCache.Track, which holds the
+                // cache lock so the swap is atomic with respect to the sync
+                // sameMode check in DecompileToCacheItem.
+                myEntryCache.Track(entry.Moniker, entry with { Mode = request.Mode });
             }
             catch (OperationCanceledException)
             {
@@ -491,25 +468,9 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         }
     }
 
-    private sealed class TypeDecompileEntry
-    {
-        public IAssembly Assembly { get; }
-        public string AssemblyFilePath { get; }
-        public string TypeFullName { get; }
-        public string Moniker { get; }
-        public string FileName { get; }
-        public IlSpyOutputMode Mode { get; set; }
-
-        public TypeDecompileEntry(IAssembly assembly, string assemblyFilePath, string typeFullName, string moniker, string fileName, IlSpyOutputMode mode)
-        {
-            Assembly = assembly;
-            AssemblyFilePath = assemblyFilePath;
-            TypeFullName = typeFullName;
-            Moniker = moniker;
-            FileName = fileName;
-            Mode = mode;
-        }
-    }
+    // TypeDecompileEntry record moved to its own file (TypeDecompileEntry.cs)
+    // so it can be referenced by TypeEntryCache without exposing internals of
+    // this provider.
 
     private static ITypeElement? GetTopLevelTypeElement(ICompiledElement element)
     {

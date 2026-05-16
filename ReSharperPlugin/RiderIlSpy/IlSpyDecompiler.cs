@@ -2,12 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
-using System.Reflection;
-using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
-using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using ICSharpCode.Decompiler;
@@ -44,305 +40,120 @@ public sealed record AssemblyBannerMetadata(
     long FileSize,
     string TargetFramework);
 
-/// <summary>
-/// Result of <see cref="IlSpyDecompiler.DecompileAssemblyToProject"/>. Surfaces the directory ILSpy
-/// wrote into plus a couple of summary counts so the caller can show a "wrote N files, project at X"
-/// confirmation without re-enumerating the output tree.
-/// </summary>
-/// <param name="OutputDirectory">Absolute path that was passed as the project root.</param>
-/// <param name="ProjectFilePath">Absolute path to the generated .csproj, or null if ILSpy
-/// emitted source without a project (rare — happens for module-only assemblies).</param>
-/// <param name="CSharpFileCount">Number of .cs files written under <paramref name="OutputDirectory"/>.</param>
-public sealed record DecompileAssemblyToProjectResult(
-    string OutputDirectory,
-    string? ProjectFilePath,
-    int CSharpFileCount);
-
 [ShellComponent]
 public class IlSpyDecompiler
 {
     private static readonly ILogger ourLogger = Logger.GetLogger<IlSpyDecompiler>();
 
-    // Single HttpClient instance reused across SourceLink fetches. HttpClient is
-    // documented as designed to be long-lived; creating one per fetch leaks TCP
-    // sockets on .NET Core and triggers SocketException after a few thousand
-    // requests under sustained navigation.
-    private static readonly HttpClient ourSharedHttpClient = CreateSharedHttpClient();
+    // FetchSourceLink and the shared HttpClient moved to IlSpySourceLinkGateway
+    // — that file owns the SourceLink integration boundary, including the
+    // long-lived HttpClient. IlSpyDecompiler now only does ICSharpCode.Decompiler
+    // work: DecompileType, DecompileAssemblyInfo, DecompileAssemblyToProject.
 
-    private static HttpClient CreateSharedHttpClient()
+    public DecompileResult DecompileType(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs = null, IlSpyOutputMode mode = IlSpyOutputMode.CSharp)
     {
-        HttpClient client = new HttpClient();
-        // raw.githubusercontent.com (the most common SourceLink target) accepts
-        // anonymous GETs without a User-Agent, but other Git hosts (e.g. some
-        // self-hosted Gitea) reject empty UAs. Identifying ourselves keeps the
-        // fetch unblocked on any vendor's traffic-filter.
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("RiderIlSpy/1.0 (+https://github.com/cryptiklemur/rider-ilspy)");
-        return client;
-    }
-
-    /// <summary>
-    /// When <paramref name="assemblyPath"/>'s portable PDB carries a SourceLink
-    /// CustomDebugInformation entry, looks up <paramref name="typeFullName"/>'s
-    /// primary source document, fetches it from the published URL, and returns
-    /// its content. Returns <c>null</c> on any failure — caller falls back to
-    /// ILSpy decompilation.
-    /// </summary>
-    /// <remarks>
-    /// Returns null when:
-    /// - The PDB is missing, non-portable, or unreadable.
-    /// - The PDB has no SourceLink entry, or its JSON is malformed.
-    /// - The type spans multiple documents (partial class). Picking one of N
-    ///   files would surface only part of the type and confuse navigation.
-    /// - No mapping rule in the SourceLink JSON covers the document path.
-    /// - The HTTP fetch fails (404, timeout, DNS failure, etc.).
-    /// </remarks>
-    /// <summary>
-    /// Result of a SourceLink fetch attempt. <see cref="Content"/> is the source
-    /// text when the fetch succeeded; otherwise it's <c>null</c> and
-    /// <see cref="Status"/> describes which step bailed (suitable for surfacing
-    /// in the diagnostic banner so the user can see why we fell back to ILSpy).
-    /// </summary>
-    public sealed record SourceLinkAttempt(string? Content, string Status);
-
-    /// <summary>
-    /// Same fetch flow as <see cref="TryGetSourceLinkSource"/> but returns a
-    /// status string explaining the outcome — used by the diagnostic banner so
-    /// "why didn't SourceLink kick in?" is answerable without grepping
-    /// idea.log. Statuses are stable identifiers, not human prose, so callers
-    /// can pattern-match if they care.
-    /// </summary>
-    public SourceLinkAttempt FetchSourceLink(string assemblyPath, string typeFullName, int timeoutSeconds, CancellationToken cancellationToken = default)
-    {
-        if (timeoutSeconds <= 0) timeoutSeconds = 5;
         try
         {
-            using PdbSourceLinkReader? pdb = PdbSourceLinkReader.TryOpen(assemblyPath);
-            if (pdb == null)
-            {
-                ourLogger.Info("RiderIlSpy.SourceLink: no portable PDB found for " + assemblyPath);
-                return new SourceLinkAttempt(null, "no-pdb");
-            }
-            string? json = pdb.TryReadSourceLinkJson();
-            if (json == null)
-            {
-                ourLogger.Info("RiderIlSpy.SourceLink: PDB has no SourceLink CustomDebugInformation entry for " + typeFullName);
-                return new SourceLinkAttempt(null, "no-sourcelink-entry-in-pdb");
-            }
-            SourceLinkMapping? mapping = SourceLinkMapping.TryParse(json);
-            if (mapping == null)
-            {
-                ourLogger.Warn("RiderIlSpy.SourceLink: malformed JSON in PDB for " + typeFullName);
-                return new SourceLinkAttempt(null, "malformed-sourcelink-json");
-            }
-            string? documentPath = pdb.TryGetPrimaryDocumentPath(typeFullName);
-            if (string.IsNullOrEmpty(documentPath))
-            {
-                ourLogger.Info("RiderIlSpy.SourceLink: no primary document for type " + typeFullName + " (partial class or no PDB rows)");
-                return new SourceLinkAttempt(null, "no-document-for-type");
-            }
-            string? url = mapping.ResolveUrl(documentPath);
-            if (string.IsNullOrEmpty(url))
-            {
-                ourLogger.Info("RiderIlSpy.SourceLink: no URL mapping for document " + documentPath);
-                return new SourceLinkAttempt(null, "no-url-for-document");
-            }
-            string cacheRoot = Path.Combine(Path.GetTempPath(), "RiderIlSpy", "sourcelink-cache");
-            SourceLinkSourceFetcher fetcher = new SourceLinkSourceFetcher(ourSharedHttpClient, cacheRoot, TimeSpan.FromSeconds(timeoutSeconds));
-            string? fetched = fetcher.FetchOrCached(url, cancellationToken);
-            if (string.IsNullOrEmpty(fetched))
-            {
-                ourLogger.Info("RiderIlSpy.SourceLink: HTTP fetch returned empty for " + url);
-                return new SourceLinkAttempt(null, "http-fetch-failed");
-            }
-            ourLogger.Info("RiderIlSpy.SourceLink: fetched " + url);
-            return new SourceLinkAttempt(fetched, "used: " + url);
+            return DecompileResult.Ok(DecompileForMode(assemblyPath, typeFullName, settings, extraSearchDirs, mode));
+        }
+        catch (ArgumentException ex) when (mode != IlSpyOutputMode.IL && DecompilerTypeSystemPatch.IsTwoComponentTfmVersionBug(ex))
+        {
+            // Hit ILSpy's two-component TFM bug; the retry path applies the
+            // reflection patch and re-runs the same mode. Extracted into its
+            // own method so the outer try/catch stays flat — no nested
+            // try-inside-catch on the happy DecompileType reader.
+            return RetryAfterTfmFix(assemblyPath, typeFullName, settings, extraSearchDirs, mode, ex);
         }
         catch (Exception ex)
         {
-            // Defensive: we never want a SourceLink lookup to bubble up. Any
-            // failure here just means "fall back to decompile" upstream.
-            ourLogger.Warn("RiderIlSpy.FetchSourceLink for " + typeFullName + " threw: " + ex.GetType().Name + ": " + ex.Message);
-            return new SourceLinkAttempt(null, "exception: " + ex.GetType().Name);
+            return DecompileResult.Fail(FormatDecompileFailure(typeFullName, ex), ex.GetType().Name + ": " + ex.Message);
         }
     }
 
-    public string? TryGetSourceLinkSource(string assemblyPath, string typeFullName, int timeoutSeconds, CancellationToken cancellationToken = default)
-        => FetchSourceLink(assemblyPath, typeFullName, timeoutSeconds, cancellationToken).Content;
-
-    public string DecompileType(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs = null, IlSpyOutputMode mode = IlSpyOutputMode.CSharp)
+    private DecompileResult RetryAfterTfmFix(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs, IlSpyOutputMode mode, ArgumentException original)
     {
+        if (!DecompilerTypeSystemPatch.TryNeuter())
+            return FallBackToIl(assemblyPath, typeFullName, settings, extraSearchDirs, original, null);
         try
         {
-            switch (mode)
-            {
-                case IlSpyOutputMode.IL:
-                    return DisassembleToIl(assemblyPath, typeFullName, settings, extraSearchDirs);
-                case IlSpyOutputMode.CSharpWithIL:
-                    return DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs);
-                default:
-                    return DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs);
-            }
+            return DecompileResult.Ok(DecompileForMode(assemblyPath, typeFullName, settings, extraSearchDirs, mode));
         }
-        catch (ArgumentException ex) when (mode != IlSpyOutputMode.IL && IsTwoComponentTfmVersionBug(ex))
+        catch (Exception retryEx)
         {
-            // Hit ILSpy's two-component TFM bug. Try to apply the reflection patch
-            // (visible side effect in the catch body, not in a `when` filter) and
-            // retry. If the patch can't be applied or the retry still fails, fall
-            // back to raw IL disassembly.
-            if (!NeuterImplicitReferences())
-                return FallBackToIl(assemblyPath, typeFullName, settings, extraSearchDirs, ex, null);
-
-            try
-            {
-                bool wantMixed = mode == IlSpyOutputMode.CSharpWithIL;
-                return wantMixed
-                    ? DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs)
-                    : DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs);
-            }
-            catch (System.Exception retryEx)
-            {
-                return FallBackToIl(assemblyPath, typeFullName, settings, extraSearchDirs, ex, retryEx);
-            }
-        }
-        catch (System.Exception ex)
-        {
-            return FormatDecompileFailure(typeFullName, ex);
+            return FallBackToIl(assemblyPath, typeFullName, settings, extraSearchDirs, original, retryEx);
         }
     }
 
-    // ILSpy's `DecompilerTypeSystem.implicitReferences` is a `static readonly string[]`
-    // containing the two assemblies (`System.Runtime.InteropServices` and
-    // `System.Runtime.CompilerServices.Unsafe`) that ILSpy tries to inject as implicit
-    // references on every .NET Core/.NET 5+ decompile. The injection code calls
-    // `tfmVersion.ToString(3)` unconditionally, which throws on .NET 10+ assemblies
-    // because `ParseTargetFramework` only pads 2-component versions when the string is
-    // exactly 3 chars long (so `v9.0` → padded, `v10.0` → not padded).
-    //
-    // Swapping the static field to an empty array makes the buggy foreach a no-op for
-    // every subsequent decompile in this process. If the type actually needs those
-    // assemblies, they're already in its own AssemblyRef table and get resolved normally.
-    private static readonly object ourNeuterLock = new object();
-    private static bool ourNeuterAttempted;
-    private static bool ourNeuterSucceeded;
-    private static string? ourNeuterFailureReason;
+    private string DecompileForMode(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs, IlSpyOutputMode mode) =>
+        mode switch
+        {
+            IlSpyOutputMode.IL => DisassembleToIl(assemblyPath, typeFullName, settings, extraSearchDirs),
+            IlSpyOutputMode.CSharpWithIL => DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs),
+            _ => DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs),
+        };
 
-    private static bool NeuterImplicitReferences() => NeuterImplicitReferences(out _);
+    // The ICSharpCode.Decompiler version-compat patch (NeuterImplicitReferences +
+    // IsTwoComponentTfmVersionBug + the static state + DynamicMethod IL emission)
+    // moved to DecompilerTypeSystemPatch.cs so this file stays focused on the
+    // decompile pipeline. Callers go through DecompilerTypeSystemPatch.{TryNeuter,
+    // GetFailureReason, IsTwoComponentTfmVersionBug}.
 
-    private static bool NeuterImplicitReferences(out string? failureReason)
+    // Tiny shared comment-formatting helper. Both failure paths below build C#
+    // comment blocks that Rider renders as decompiled "source"; centralizing the
+    // `// ` prefix and divider conventions here keeps the layout consistent and
+    // removes the hand-rolled StringBuilder pattern from each call site.
+    private static class CommentBlock
     {
-        lock (ourNeuterLock)
+        public static StringBuilder Line(StringBuilder sb, string text) => sb.Append("// ").Append(text).Append('\n');
+        public static StringBuilder Divider(StringBuilder sb) => sb.Append("//\n");
+        public static StringBuilder IndentedLine(StringBuilder sb, int depth, string text)
         {
-            if (ourNeuterAttempted)
-            {
-                failureReason = ourNeuterFailureReason;
-                return ourNeuterSucceeded;
-            }
-            ourNeuterAttempted = true;
-
-            try
-            {
-                Type dts = typeof(DecompilerTypeSystem);
-                FieldInfo? field = dts.GetField("implicitReferences", BindingFlags.NonPublic | BindingFlags.Static)
-                                ?? dts.GetField("ImplicitReferences", BindingFlags.NonPublic | BindingFlags.Static)
-                                ?? dts.GetField("_implicitReferences", BindingFlags.NonPublic | BindingFlags.Static);
-                if (field == null)
-                {
-                    ourNeuterFailureReason = "could not find implicitReferences field on DecompilerTypeSystem (loaded version may be different from 8.2)";
-                    failureReason = ourNeuterFailureReason;
-                    return ourNeuterSucceeded = false;
-                }
-                if (field.FieldType != typeof(string[]))
-                {
-                    ourNeuterFailureReason = "implicitReferences field has unexpected type " + field.FieldType.FullName + " (expected string[])";
-                    failureReason = ourNeuterFailureReason;
-                    return ourNeuterSucceeded = false;
-                }
-
-                // .NET Core 3.0+ blocks FieldInfo.SetValue on `static readonly` (initonly)
-                // fields with FieldAccessException. Emit a dynamic method that uses the
-                // `stsfld` opcode directly — the verifier skips initonly checks for
-                // dynamic methods when skipVisibility is true.
-                DynamicMethod method = new DynamicMethod(
-                    "RiderIlSpy_NeuterImplicitReferences",
-                    typeof(void),
-                    new[] { typeof(string[]) },
-                    typeof(IlSpyDecompiler),
-                    skipVisibility: true);
-                ILGenerator il = method.GetILGenerator();
-                il.Emit(OpCodes.Ldarg_0);
-                il.Emit(OpCodes.Stsfld, field);
-                il.Emit(OpCodes.Ret);
-                Action<string[]> setter = (Action<string[]>)method.CreateDelegate(typeof(Action<string[]>));
-                setter(Array.Empty<string>());
-
-                ourNeuterSucceeded = true;
-                failureReason = null;
-                return true;
-            }
-            catch (System.Exception ex)
-            {
-                ourNeuterFailureReason = ex.GetType().FullName + ": " + ex.Message;
-                failureReason = ourNeuterFailureReason;
-                return ourNeuterSucceeded = false;
-            }
+            sb.Append("// ");
+            for (int i = 0; i < depth; i++) sb.Append("  ");
+            return sb.Append(text).Append('\n');
         }
     }
 
-    // Detects ILSpy bug in DecompilerTypeSystem.InitializeAsync: when the assembly's
-    // TargetFramework attribute parses to a 2-component Version (e.g. ".NETCoreApp,Version=v9.0"
-    // or ".NETStandard,Version=v2.0"), ILSpy calls `version.ToString(3)` to format implicit
-    // references, which throws ArgumentException with paramName="fieldCount".
-    //
-    // Present in 8.2, 9.1, 10.0 — never been fixed upstream. CSharp and CSharpWithIL modes
-    // both go through DecompilerTypeSystem. IL-only mode uses ReflectionDisassembler and
-    // skips this entire codepath, so it always works.
-    internal static bool IsTwoComponentTfmVersionBug(ArgumentException ex)
-    {
-        if (ex.ParamName != "fieldCount") return false;
-        // Walk the exception's stack frames looking for the
-        // ICSharpCode.Decompiler.TypeSystem.DecompilerTypeSystem origin.
-        // Type-identity beats string-matching the formatted StackTrace because
-        // it survives stack-frame omissions in Release builds and is not
-        // affected by namespace renames in user-facing trace text.
-        System.Diagnostics.StackFrame[] frames = new System.Diagnostics.StackTrace(ex, fNeedFileInfo: false).GetFrames();
-        foreach (System.Diagnostics.StackFrame frame in frames)
-        {
-            Type? declaringType = frame.GetMethod()?.DeclaringType;
-            if (declaringType != null && declaringType.FullName == "ICSharpCode.Decompiler.TypeSystem.DecompilerTypeSystem")
-                return true;
-        }
-        return false;
-    }
-
-    private string FallBackToIl(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs, ArgumentException original, System.Exception? retryFailure)
+    private DecompileResult FallBackToIl(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs, ArgumentException original, System.Exception? retryFailure)
     {
         try
         {
             string il = DisassembleToIl(assemblyPath, typeFullName, settings, extraSearchDirs);
             StringBuilder sb = new StringBuilder();
-            sb.Append("// RiderIlSpy: C# decompile hit ICSharpCode.Decompiler's 2-component TFM\n");
-            sb.Append("// bug (e.g. .NET 10's '.NETCoreApp,Version=v10.0') and the reflection\n");
-            sb.Append("// workaround couldn't be applied. Falling back to IL disassembly.\n");
-            if (ourNeuterFailureReason != null)
-                sb.Append("// Neuter failure: ").Append(ourNeuterFailureReason).Append('\n');
+            CommentBlock.Line(sb, "RiderIlSpy: C# decompile hit ICSharpCode.Decompiler's 2-component TFM");
+            CommentBlock.Line(sb, "bug (e.g. .NET 10's '.NETCoreApp,Version=v10.0') and the reflection");
+            CommentBlock.Line(sb, "workaround couldn't be applied. Falling back to IL disassembly.");
+            // DecompilerTypeSystemPatch.GetFailureReason snapshots the reason
+            // under the same lock as the writers — guarantees consistency with
+            // the success flag and avoids torn reads if more fields are added
+            // to the failure-reason channel later.
+            string? neuterFailure = DecompilerTypeSystemPatch.GetFailureReason();
+            if (neuterFailure != null)
+                CommentBlock.Line(sb, "Neuter failure: " + neuterFailure);
             if (retryFailure != null)
-                sb.Append("// Retry after neuter also threw: ").Append(retryFailure.GetType().FullName).Append(": ").Append(retryFailure.Message).Append('\n');
-            sb.Append("//\n");
+                CommentBlock.Line(sb, "Retry after neuter also threw: " + retryFailure.GetType().FullName + ": " + retryFailure.Message);
+            CommentBlock.Divider(sb);
             sb.Append(il);
-            return sb.ToString();
+            // IL bytes ARE real source — even though we got here via the C# fallback
+            // path, the user has usable disassembly. Marking this Ok lets the caller
+            // cache it; Fail would be reserved for "all paths produced nothing but
+            // a comment block".
+            return DecompileResult.Ok(sb.ToString());
         }
-        catch (System.Exception fallbackEx)
+        catch (Exception fallbackEx)
         {
             StringBuilder sb = new StringBuilder();
             sb.Append(FormatDecompileFailure(typeFullName, original));
             if (retryFailure != null)
             {
-                sb.Append("\n// CSharp retry after neutering implicit refs also failed:\n");
+                sb.Append('\n');
+                CommentBlock.Line(sb, "CSharp retry after neutering implicit refs also failed:");
                 sb.Append(FormatDecompileFailure(typeFullName, retryFailure));
             }
-            sb.Append("\n// IL fallback also failed:\n");
+            sb.Append('\n');
+            CommentBlock.Line(sb, "IL fallback also failed:");
             sb.Append(FormatDecompileFailure(typeFullName, fallbackEx));
-            return sb.ToString();
+            return DecompileResult.Fail(sb.ToString(), "IL fallback failed: " + fallbackEx.GetType().Name + ": " + fallbackEx.Message);
         }
     }
 
@@ -352,28 +163,26 @@ public class IlSpyDecompiler
     private static string FormatDecompileFailure(string typeFullName, System.Exception ex)
     {
         StringBuilder sb = new StringBuilder();
-        sb.Append("// RiderIlSpy decompile failed for ").Append(typeFullName).Append('\n');
-        sb.Append("//\n");
-        sb.Append("// This is almost always an ICSharpCode.Decompiler bug. Please file an issue at\n");
-        sb.Append("// https://github.com/cryptiklemur/rider-ilspy/issues with the type name and the\n");
-        sb.Append("// trace below.\n");
-        sb.Append("//\n");
+        CommentBlock.Line(sb, "RiderIlSpy decompile failed for " + typeFullName);
+        CommentBlock.Divider(sb);
+        CommentBlock.Line(sb, "This is almost always an ICSharpCode.Decompiler bug. Please file an issue at");
+        CommentBlock.Line(sb, "https://github.com/cryptiklemur/rider-ilspy/issues with the type name and the");
+        CommentBlock.Line(sb, "trace below.");
+        CommentBlock.Divider(sb);
         System.Exception? current = ex;
         int depth = 0;
         while (current != null)
         {
-            string indent = depth == 0 ? "// " : "//   ";
-            sb.Append(indent).Append(current.GetType().FullName).Append(": ").Append(current.Message).Append('\n');
+            CommentBlock.IndentedLine(sb, depth, current.GetType().FullName + ": " + current.Message);
             if (!string.IsNullOrEmpty(current.StackTrace))
                 foreach (string line in current.StackTrace.Split('\n'))
-                    sb.Append("//     ").Append(line.TrimEnd('\r')).Append('\n');
+                    CommentBlock.IndentedLine(sb, depth + 1, line.TrimEnd('\r'));
             current = current.InnerException;
             depth++;
         }
         return sb.ToString();
     }
-
-    public string DecompileAssemblyInfo(string assemblyPath, DecompilerSettings? settings = null, IReadOnlyList<string>? extraSearchDirs = null)
+    public DecompileResult DecompileAssemblyInfo(string assemblyPath, DecompilerSettings? settings = null, IReadOnlyList<string>? extraSearchDirs = null)
     {
         try
         {
@@ -381,32 +190,21 @@ public class IlSpyDecompiler
             using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
             UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, effective, extraSearchDirs);
             CSharpDecompiler decompiler = new CSharpDecompiler(module, resolver, effective);
-            return decompiler.DecompileModuleAndAssemblyAttributesToString();
+            return DecompileResult.Ok(decompiler.DecompileModuleAndAssemblyAttributesToString());
         }
-        catch (System.Exception ex)
+        catch (Exception ex)
         {
-            return FormatDecompileFailure(assemblyPath, ex);
+            return DecompileResult.Fail(FormatDecompileFailure(assemblyPath, ex), ex.GetType().Name + ": " + ex.Message);
         }
     }
 
-    /// <summary>
-    /// Reads identity metadata from a PE/CLI assembly without loading it into the
-    /// AppDomain. Returns null when the file is unreadable or not a managed assembly.
-    /// Used by the diagnostic banner to mirror the JetBrains decompiler's
-    /// `// Assembly: ... // MVID: ...` header.
-    /// </summary>
-    public AssemblyBannerMetadata? GetAssemblyBannerMetadata(string assemblyPath)
-    {
-        // Body lives in IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata
-        // (SDK-free, unit-testable). Wrapper here just adds Warn-on-null logging so
-        // banner failures stay diagnosable in the IDE without polluting the helper.
-        AssemblyBannerMetadata? result = IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata(assemblyPath);
-        if (result == null && File.Exists(assemblyPath))
-            ourLogger.Warn("RiderIlSpy.GetAssemblyBannerMetadata returned null for " + assemblyPath);
-        return result;
-    }
+    // GetAssemblyBannerMetadata removed — it was a one-liner that wrapped
+    // IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata only to add
+    // Warn-on-null logging, which belongs on the integration boundary rather
+    // than mixed into ICSharpCode.Decompiler work. Provider callers now invoke
+    // ReadAssemblyBannerMetadata directly and own their own logging.
 
-    /// <summary>
+/// <summary>
     /// Decompiles an entire assembly to a buildable C# project tree under <paramref name="targetDirectory"/>.
     /// Wraps ILSpy's <see cref="WholeProjectDecompiler"/> with the same resolver / search-dir setup that
     /// per-type decompilation uses, so the output respects the user's IlSpySettings (language version,
@@ -468,7 +266,7 @@ public class IlSpyDecompiler
         using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
         UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, settings, extraSearchDirs);
 
-        TypeDefinitionHandle handle = FindTypeHandle(module, typeFullName);
+        TypeDefinitionHandle handle = MetadataTypeNameBuilder.FindTypeHandle(module.Metadata, typeFullName);
         if (handle.IsNil) return "// type not found: " + typeFullName;
 
         using StringWriter sw = new StringWriter();
@@ -494,7 +292,7 @@ public class IlSpyDecompiler
         using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
         UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, settings, extraSearchDirs);
 
-        TypeDefinitionHandle handle = FindTypeHandle(module, typeFullName);
+        TypeDefinitionHandle handle = MetadataTypeNameBuilder.FindTypeHandle(module.Metadata, typeFullName);
         if (handle.IsNil) return "// type not found: " + typeFullName;
 
         using StringWriter sw = new StringWriter();
@@ -522,30 +320,7 @@ public class IlSpyDecompiler
         return resolver;
     }
 
-    private static TypeDefinitionHandle FindTypeHandle(PEFile module, string typeFullName)
-    {
-        MetadataReader metadata = module.Metadata;
-        foreach (TypeDefinitionHandle handle in metadata.TypeDefinitions)
-        {
-            TypeDefinition def = metadata.GetTypeDefinition(handle);
-            string built = BuildTypeFullName(metadata, def);
-            if (built == typeFullName) return handle;
-        }
-        return default;
-    }
-
-    // Builds a CLR-reflection-style full name: `Namespace.Outer+Inner+Leaf` with generic arity
-    // baked into each segment (`List`1`). Rider's IClrTypeName.FullName uses the same shape.
-    private static string BuildTypeFullName(MetadataReader metadata, TypeDefinition def)
-    {
-        string name = metadata.GetString(def.Name);
-        TypeDefinitionHandle declaringHandle = def.GetDeclaringType();
-        if (!declaringHandle.IsNil)
-        {
-            TypeDefinition decl = metadata.GetTypeDefinition(declaringHandle);
-            return BuildTypeFullName(metadata, decl) + "+" + name;
-        }
-        string ns = metadata.GetString(def.Namespace);
-        return string.IsNullOrEmpty(ns) ? name : ns + "." + name;
-    }
+    // FindTypeHandle was previously defined locally here; moved to
+    // MetadataTypeNameBuilder.FindTypeHandle so the SourceLink PDB lookup
+    // (PdbSourceLinkReader) and the decompile path use the exact same projection.
 }

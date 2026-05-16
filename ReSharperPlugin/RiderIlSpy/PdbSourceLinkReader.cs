@@ -29,15 +29,17 @@ namespace RiderIlSpy;
 /// </remarks>
 public sealed class PdbSourceLinkReader : IDisposable
 {
-    private static readonly Guid SourceLinkKind = new Guid("cc110556-a091-4d38-9fec-25ab9a351a6a");
+    private static readonly Guid ourSourceLinkKind = new Guid("cc110556-a091-4d38-9fec-25ab9a351a6a");
 
+    private readonly FileStream myAssemblyStream;
     private readonly PEReader myPeReader;
     private readonly MetadataReaderProvider? myPdbProvider;
     private readonly MetadataReader? myPdbReader;
     private readonly MetadataReader myPeMetadata;
 
-    private PdbSourceLinkReader(PEReader peReader, MetadataReader peMetadata, MetadataReaderProvider? pdbProvider, MetadataReader? pdbReader)
+    private PdbSourceLinkReader(FileStream assemblyStream, PEReader peReader, MetadataReader peMetadata, MetadataReaderProvider? pdbProvider, MetadataReader? pdbReader)
     {
+        myAssemblyStream = assemblyStream;
         myPeReader = peReader;
         myPdbProvider = pdbProvider;
         myPdbReader = pdbReader;
@@ -53,77 +55,51 @@ public sealed class PdbSourceLinkReader : IDisposable
     public static PdbSourceLinkReader? TryOpen(string assemblyPath)
     {
         if (!File.Exists(assemblyPath)) return null;
-        FileStream asmStream;
+        // Unified ownership trail — track every IDisposable we allocate so the
+        // single finally can dispose what we created if any step fails. Earlier
+        // versions hand-unwound each catch (asmStream → peReader → pdbProvider
+        // re-disposed in three places), which was easy to skew when adding a
+        // step. The transferOwnership flag flips to true only after the
+        // PdbSourceLinkReader instance takes ownership of the chain.
+        FileStream? asmStream = null;
+        PEReader? peReader = null;
+        MetadataReaderProvider? pdbProvider = null;
+        bool transferOwnership = false;
         try
         {
             asmStream = new FileStream(assemblyPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-        }
-        catch (IOException)
-        {
-            return null;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return null;
-        }
-
-        PEReader peReader;
-        MetadataReader peMetadata;
-        try
-        {
             peReader = new PEReader(asmStream, PEStreamOptions.PrefetchEntireImage | PEStreamOptions.LeaveOpen);
             // GetMetadataReader is the canonical "is this actually a managed PE"
             // check — header-only failures throw here, not in the ctor. Calling
             // it eagerly means TryOpen never returns a reader that later
             // implodes mid-use.
-            peMetadata = peReader.GetMetadataReader();
-        }
-        catch (BadImageFormatException)
-        {
-            asmStream.Dispose();
-            return null;
-        }
-        catch (InvalidOperationException)
-        {
-            // PEReader throws this for "Image is too small" before producing
-            // a usable MetadataReader.
-            asmStream.Dispose();
-            return null;
-        }
+            MetadataReader peMetadata = peReader.GetMetadataReader();
 
-        MetadataReaderProvider? pdbProvider;
-        try
-        {
-            pdbProvider = TryOpenEmbedded(peReader);
-        }
-        catch (BadImageFormatException)
-        {
-            pdbProvider = null;
-        }
-        if (pdbProvider == null)
-            pdbProvider = TryOpenSidecar(assemblyPath);
+            // TryOpenEmbedded already swallows BadImageFormatException and
+            // returns null, so no outer catch is needed here.
+            pdbProvider = TryOpenEmbedded(peReader) ?? TryOpenSidecar(assemblyPath);
+            if (pdbProvider == null) return null;
 
-        if (pdbProvider == null)
-        {
-            peReader.Dispose();
-            asmStream.Dispose();
-            return null;
+            MetadataReader pdbReader = pdbProvider.GetMetadataReader();
+            PdbSourceLinkReader instance = new PdbSourceLinkReader(asmStream, peReader, peMetadata, pdbProvider, pdbReader);
+            transferOwnership = true;
+            return instance;
         }
-
-        MetadataReader pdbReader;
-        try
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+        // PEReader throws InvalidOperationException for "Image is too small"
+        // before producing a usable MetadataReader.
+        catch (InvalidOperationException) { return null; }
+        catch (BadImageFormatException) { return null; }
+        finally
         {
-            pdbReader = pdbProvider.GetMetadataReader();
+            if (!transferOwnership)
+            {
+                pdbProvider?.Dispose();
+                peReader?.Dispose();
+                asmStream?.Dispose();
+            }
         }
-        catch (BadImageFormatException)
-        {
-            pdbProvider.Dispose();
-            peReader.Dispose();
-            asmStream.Dispose();
-            return null;
-        }
-
-        return new PdbSourceLinkReader(peReader, peMetadata, pdbProvider, pdbReader);
     }
 
     /// <summary>
@@ -137,7 +113,7 @@ public sealed class PdbSourceLinkReader : IDisposable
         {
             CustomDebugInformation cdi = myPdbReader.GetCustomDebugInformation(handle);
             Guid kind = myPdbReader.GetGuid(cdi.Kind);
-            if (kind != SourceLinkKind) continue;
+            if (kind != ourSourceLinkKind) continue;
             BlobReader blob = myPdbReader.GetBlobReader(cdi.Value);
             return blob.ReadUTF8(blob.RemainingBytes);
         }
@@ -153,7 +129,7 @@ public sealed class PdbSourceLinkReader : IDisposable
     public string? TryGetPrimaryDocumentPath(string typeFullName)
     {
         if (myPdbReader == null) return null;
-        TypeDefinitionHandle typeHandle = FindTypeHandle(typeFullName);
+        TypeDefinitionHandle typeHandle = MetadataTypeNameBuilder.FindTypeHandle(myPeMetadata, typeFullName);
         if (typeHandle.IsNil) return null;
 
         TypeDefinition typeDef = myPeMetadata.GetTypeDefinition(typeHandle);
@@ -173,8 +149,15 @@ public sealed class PdbSourceLinkReader : IDisposable
             DocumentHandle docHandle = dbg.Document;
             if (docHandle.IsNil)
             {
-                // Multi-document method — give up. Returning a single file would
-                // surface only part of a partial class.
+                // dbg.Document being nil means EITHER (a) the method has no
+                // sequence points at all (compiler-generated, abstract,
+                // <Module>.cctor with stripped debug rows) OR (b) sequence points
+                // span multiple documents (partial-class method body split across
+                // files). Case (a) must skip — otherwise one stripped method
+                // poisons the lookup for a type that's otherwise single-document.
+                // Case (b) must give up — surfacing one file of a partial class
+                // is more confusing than falling back to decompilation.
+                if (dbg.SequencePointsBlob.IsNil) continue;
                 return null;
             }
             string path = ReadDocumentPath(docHandle);
@@ -198,29 +181,7 @@ public sealed class PdbSourceLinkReader : IDisposable
         return myPdbReader.GetString(doc.Name);
     }
 
-    private TypeDefinitionHandle FindTypeHandle(string typeFullName)
-    {
-        foreach (TypeDefinitionHandle handle in myPeMetadata.TypeDefinitions)
-        {
-            TypeDefinition def = myPeMetadata.GetTypeDefinition(handle);
-            string built = BuildTypeFullName(myPeMetadata, def);
-            if (built == typeFullName) return handle;
-        }
-        return default;
-    }
 
-    private static string BuildTypeFullName(MetadataReader metadata, TypeDefinition def)
-    {
-        string name = metadata.GetString(def.Name);
-        TypeDefinitionHandle declaringHandle = def.GetDeclaringType();
-        if (!declaringHandle.IsNil)
-        {
-            TypeDefinition decl = metadata.GetTypeDefinition(declaringHandle);
-            return BuildTypeFullName(metadata, decl) + "+" + name;
-        }
-        string ns = metadata.GetString(def.Namespace);
-        return string.IsNullOrEmpty(ns) ? name : ns + "." + name;
-    }
 
     private static MetadataReaderProvider? TryOpenEmbedded(PEReader peReader)
     {
@@ -272,5 +233,9 @@ public sealed class PdbSourceLinkReader : IDisposable
     {
         myPdbProvider?.Dispose();
         myPeReader.Dispose();
+        // PEReader was constructed with LeaveOpen — we own the asm FileStream
+        // and must dispose it here, else every successful TryOpen leaks a handle
+        // (Windows: locks the assembly; Linux: just an fd leak, but still real).
+        myAssemblyStream.Dispose();
     }
 }

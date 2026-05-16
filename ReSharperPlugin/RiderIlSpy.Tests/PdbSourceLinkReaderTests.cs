@@ -66,4 +66,37 @@ public class PdbSourceLinkReaderTests
         if (reader == null) return; // no pdb available in this env — skip
         Assert.Null(reader.TryGetPrimaryDocumentPath("Some.Type.That.Definitely.Does.Not.Exist"));
     }
+
+    // Regression test for the FileStream leak: PEReader was constructed with
+    // PEStreamOptions.LeaveOpen but the underlying FileStream wasn't tracked or
+    // disposed, so every successful TryOpen leaked an fd (and on Windows kept
+    // the assembly file locked for write). Verify Dispose now releases the
+    // file by copying a real PE to a temp location, opening + disposing the
+    // reader, then asserting the temp file can be deleted (which would throw
+    // IOException on Windows if a handle remained open).
+    [Fact]
+    public void Dispose_releases_underlying_filestream_so_file_can_be_deleted()
+    {
+        string srcPath = typeof(PdbSourceLinkReaderTests).Assembly.Location;
+        string copyPath = Path.Combine(Path.GetTempPath(), "RiderIlSpyTests-disp-" + Guid.NewGuid().ToString("N") + ".dll");
+        File.Copy(srcPath, copyPath);
+        try
+        {
+            PdbSourceLinkReader? reader = PdbSourceLinkReader.TryOpen(copyPath);
+            // Even if no PDB sidecar exists alongside the copy, TryOpen may
+            // still have succeeded via embedded portable PDB. Whichever path
+            // ran, Dispose must release every owned handle.
+            reader?.Dispose();
+            // Delete is the cross-platform check: on Windows a leaked FileStream
+            // would lock the file and File.Delete throws IOException. On Linux
+            // it just exercises the disposal path without false-failing.
+            File.Delete(copyPath);
+            Assert.False(File.Exists(copyPath));
+        }
+        finally
+        {
+            if (File.Exists(copyPath))
+                File.Delete(copyPath);
+        }
+    }
 }

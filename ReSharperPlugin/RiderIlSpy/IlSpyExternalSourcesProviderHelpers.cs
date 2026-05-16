@@ -56,7 +56,30 @@ internal static class IlSpyExternalSourcesProviderHelpers
         return true;
     }
 
-    public static IDictionary<string, string> BuildCacheProperties(IlSpyOutputMode mode, string assemblyPath, string typeFullName, string moniker, string fileName)
+    /// <summary>
+    /// Inverse of <see cref="BuildCacheProperties"/>. Returns null when any
+    /// required key is missing or the mode is unparseable. Kept SDK-free so the
+    /// property-bag-to-fields parsing is unit-testable without spinning up an
+    /// <see cref="JetBrains.Metadata.Reader.API.IAssembly"/>; the provider layer
+    /// adds the IAssembly handle on top of this pure parse.
+    /// </summary>
+    public static DecompileEntryFields? TryParseDecompileEntryFields(IDictionary<string, string>? properties)
+    {
+        if (properties == null) return null;
+        if (!properties.TryGetValue("RiderIlSpy.Moniker", out string? moniker) || string.IsNullOrEmpty(moniker)) return null;
+        if (!properties.TryGetValue("RiderIlSpy.Assembly", out string? asmPath)) return null;
+        if (!properties.TryGetValue("RiderIlSpy.Type", out string? typeFullName)) return null;
+        if (!properties.TryGetValue("RiderIlSpy.FileName", out string? fileName)) return null;
+        if (!properties.TryGetValue("RiderIlSpy.Mode", out string? modeStr)) return null;
+        if (!Enum.TryParse(modeStr, out IlSpyOutputMode mode)) return null;
+        return new DecompileEntryFields(asmPath, typeFullName, moniker, fileName, mode);
+    }
+
+    // Returns Dictionary<,> (mutable) rather than IReadOnlyDictionary<,> because
+    // the sole production caller is Rider's PutCacheItem, which takes
+    // IDictionary<,>. Returning the concrete type avoids a downcast at the
+    // API boundary; tests still consume it through the IReadOnly view implicitly.
+    public static Dictionary<string, string> BuildCacheProperties(IlSpyOutputMode mode, string assemblyPath, string typeFullName, string moniker, string fileName)
     {
         return new Dictionary<string, string>
         {
@@ -68,13 +91,18 @@ internal static class IlSpyExternalSourcesProviderHelpers
         };
     }
 
-    public static string RedactHome(string path)
+    // Production callers use the overload that reads HOME from the environment;
+    // unit tests use the explicit-home overload to avoid mutating the process-wide
+    // HOME env var (which would break under xunit parallelism).
+    public static string RedactHome(string path) =>
+        RedactHome(path, Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+
+    public static string RedactHome(string path, string? homeDir)
     {
         if (string.IsNullOrEmpty(path)) return path;
-        string home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (string.IsNullOrEmpty(home)) return path;
-        if (path.StartsWith(home, StringComparison.OrdinalIgnoreCase))
-            return "~" + path.Substring(home.Length);
+        if (string.IsNullOrEmpty(homeDir)) return path;
+        if (path.StartsWith(homeDir, StringComparison.OrdinalIgnoreCase))
+            return "~" + path.Substring(homeDir.Length);
         return path;
     }
 
@@ -84,7 +112,7 @@ internal static class IlSpyExternalSourcesProviderHelpers
     // failure path returns a sentinel ("", "unknown") that the banner already
     // renders meaningfully — losing version/xml-path enrichment is non-fatal
     // diagnostic noise, not data loss.
-    public static string SafeXmlDocPath(string assemblyPath)
+    public static string XmlDocPathOrEmpty(string assemblyPath)
     {
         if (string.IsNullOrEmpty(assemblyPath)) return string.Empty;
         try { return Path.ChangeExtension(assemblyPath, ".xml"); }
@@ -156,19 +184,20 @@ internal static class IlSpyExternalSourcesProviderHelpers
     // Convenience seam so both decompile paths use a single point for banner prepending.
     // Fetching AssemblyBannerMetadata stays at the caller because it depends on
     // IlSpyDecompiler (a ReSharper SDK component); this helper itself is pure.
-    public static string WithBannerIfEnabled(bool showBanner, AssemblyBannerMetadata? meta, string assemblyPath, string typeFullName, IlSpyOutputMode mode, IReadOnlyList<string> extraSearchDirs, string content)
-        => WithBannerIfEnabled(showBanner, meta, assemblyPath, typeFullName, mode, extraSearchDirs, sourceLinkStatus: null, content);
+    public static string WithBannerIfEnabled(bool showBanner, BannerContext ctx, string content)
+        => WithBannerIfEnabled(showBanner, ctx, sourceLinkOutcome: null, content);
 
     /// <summary>
-    /// Banner overload that surfaces a SourceLink fetch status row. When the
-    /// status is non-null and the show-banner setting is on, the banner gets
-    /// an extra <c>// SourceLink: &lt;status&gt;</c> line so users can tell
-    /// why the original source wasn't used without grepping idea.log.
+    /// Banner overload that surfaces a SourceLink fetch outcome row. When the
+    /// outcome is non-null and emits a visible banner line (silent statuses like
+    /// Disabled / SkippedMode / NotAttempted return null from the formatter),
+    /// the banner gets an extra <c>// SourceLink: &lt;status&gt;</c> line so
+    /// users can tell why the original source wasn't used without grepping idea.log.
     /// </summary>
-    public static string WithBannerIfEnabled(bool showBanner, AssemblyBannerMetadata? meta, string assemblyPath, string typeFullName, IlSpyOutputMode mode, IReadOnlyList<string> extraSearchDirs, string? sourceLinkStatus, string content)
+    public static string WithBannerIfEnabled(bool showBanner, BannerContext ctx, SourceLinkOutcome? sourceLinkOutcome, string content)
     {
         if (!showBanner) return content;
-        return BuildDiagnosticBanner(meta, assemblyPath, typeFullName, mode, extraSearchDirs, sourceLinkStatus) + content;
+        return BuildDiagnosticBanner(ctx, sourceLinkOutcome) + content;
     }
 
     // Mirrors the JetBrains decompiler banner shape so output is visually familiar:
@@ -185,41 +214,40 @@ internal static class IlSpyExternalSourcesProviderHelpers
     // Reading metadata is best-effort: if the caller could not retrieve it (null)
     // we still emit the path/mode rows so the banner remains useful (e.g. for
     // diagnosing assembly resolution).
-    public static string BuildDiagnosticBanner(AssemblyBannerMetadata? meta, string assemblyPath, string typeFullName, IlSpyOutputMode mode, IReadOnlyList<string> extraSearchDirs)
-        => BuildDiagnosticBanner(meta, assemblyPath, typeFullName, mode, extraSearchDirs, sourceLinkStatus: null);
-
-    public static string BuildDiagnosticBanner(AssemblyBannerMetadata? meta, string assemblyPath, string typeFullName, IlSpyOutputMode mode, IReadOnlyList<string> extraSearchDirs, string? sourceLinkStatus)
+    public static string BuildDiagnosticBanner(BannerContext ctx, SourceLinkOutcome? sourceLinkOutcome)
     {
-        string xmlDocPath = SafeXmlDocPath(assemblyPath);
+        string xmlDocPath = XmlDocPathOrEmpty(ctx.AssemblyPath);
         bool xmlExists = !string.IsNullOrEmpty(xmlDocPath) && File.Exists(xmlDocPath);
 
         StringBuilder sb = new StringBuilder(512);
         sb.Append("// Decompiled with RiderIlSpy (ICSharpCode.Decompiler ").Append(GetDecompilerVersion()).Append(")\n");
-        sb.Append("// Type: ").Append(typeFullName).Append('\n');
-        if (meta != null)
+        sb.Append("// Type: ").Append(ctx.TypeFullName).Append('\n');
+        if (ctx.Meta != null)
         {
-            sb.Append("// Assembly: ").Append(meta.Name)
-              .Append(", Version=").Append(meta.Version)
-              .Append(", Culture=").Append(meta.Culture)
-              .Append(", PublicKeyToken=").Append(meta.PublicKeyToken).Append('\n');
-            sb.Append("// MVID: ").Append(meta.Mvid).Append('\n');
-            sb.Append("// Target framework: ").Append(meta.TargetFramework).Append('\n');
-            sb.Append("// File size: ").Append(meta.FileSize.ToString("N0", CultureInfo.InvariantCulture)).Append(" bytes\n");
+            sb.Append("// Assembly: ").Append(ctx.Meta.Name)
+              .Append(", Version=").Append(ctx.Meta.Version)
+              .Append(", Culture=").Append(ctx.Meta.Culture)
+              .Append(", PublicKeyToken=").Append(ctx.Meta.PublicKeyToken).Append('\n');
+            sb.Append("// MVID: ").Append(ctx.Meta.Mvid).Append('\n');
+            sb.Append("// Target framework: ").Append(ctx.Meta.TargetFramework).Append('\n');
+            sb.Append("// File size: ").Append(ctx.Meta.FileSize.ToString("N0", CultureInfo.InvariantCulture)).Append(" bytes\n");
         }
-        sb.Append("// Assembly location: ").Append(RedactHome(assemblyPath)).Append('\n');
+        sb.Append("// Assembly location: ").Append(RedactHome(ctx.AssemblyPath)).Append('\n');
         sb.Append("// XML documentation location: ").Append(xmlExists ? RedactHome(xmlDocPath) : "(none)").Append('\n');
-        sb.Append("// Mode: ").Append(mode).Append('\n');
+        sb.Append("// Mode: ").Append(ctx.Mode).Append('\n');
         sb.Append("// Extra search dirs: ")
-          .Append(extraSearchDirs.Count == 0 ? "(none)" : string.Join(", ", extraSearchDirs.Select(RedactHome)))
+          .Append(ctx.ExtraSearchDirs.Count == 0 ? "(none)" : string.Join(", ", ctx.ExtraSearchDirs.Select(RedactHome)))
           .Append('\n');
-        // SourceLink status: only emitted when an explicit attempt was made
-        // ("disabled" / "skipped-mode" are silenced — the user can read the
-        // Mode line and infer the rest). Other statuses are interesting
-        // diagnostics ("no-pdb", "no-sourcelink-entry-in-pdb", "used: <url>",
-        // etc.) and answer "why did SourceLink not kick in?" inline.
-        if (!string.IsNullOrEmpty(sourceLinkStatus) && sourceLinkStatus != "disabled" && sourceLinkStatus != "skipped-mode")
+        // SourceLink line: only emitted for outcomes that answer "why did
+        // SourceLink not kick in?" usefully. Disabled / SkippedMode / NotAttempted
+        // are silenced via the formatter — the user can read the Mode line and
+        // the settings toggle and infer the rest. NoPdb, NoSourceLinkEntry,
+        // HttpFailed, Used, etc. each carry a unique diagnostic so they're shown.
+        if (sourceLinkOutcome != null)
         {
-            sb.Append("// SourceLink: ").Append(sourceLinkStatus).Append('\n');
+            string? line = SourceLinkOutcomeFormatter.FormatBannerLine(sourceLinkOutcome);
+            if (line != null)
+                sb.Append(line).Append('\n');
         }
         sb.Append('\n');
         return sb.ToString();

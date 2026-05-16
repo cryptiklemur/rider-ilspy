@@ -1,34 +1,16 @@
-using System;
 using Xunit;
 
 namespace RiderIlSpy.Tests;
 
+/// <summary>
+/// Tests for SDK-free helpers reachable through
+/// <see cref="IlSpyExternalSourcesProviderHelpers"/>. The TFM-bug-detection
+/// tests previously lived here but moved to
+/// <see cref="DecompilerTypeSystemPatchTests"/> alongside the extracted
+/// <see cref="DecompilerTypeSystemPatch"/> they now exercise.
+/// </summary>
 public class IlSpyDecompilerHelpersTests
 {
-    [Fact]
-    public void IsTwoComponentTfmVersionBug_returns_false_when_paramName_is_not_fieldCount()
-    {
-        ArgumentException ex = new ArgumentException("not the bug", "otherParam");
-        Assert.False(IlSpyDecompiler.IsTwoComponentTfmVersionBug(ex));
-    }
-
-    [Fact]
-    public void IsTwoComponentTfmVersionBug_returns_false_for_unrelated_argument_exception_with_fieldCount()
-    {
-        ArgumentException ex;
-        try
-        {
-            new Version(1, 0).ToString(99);
-            throw new InvalidOperationException("expected ToString(99) to throw");
-        }
-        catch (ArgumentException caught)
-        {
-            ex = caught;
-        }
-        Assert.Equal("fieldCount", ex.ParamName);
-        Assert.False(IlSpyDecompiler.IsTwoComponentTfmVersionBug(ex));
-    }
-
     [Fact]
     public void ComputePublicKeyToken_matches_mscorlib_known_token()
     {

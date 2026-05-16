@@ -65,7 +65,7 @@ public class IlSpyExternalSourcesProviderHelpersTests
     [Fact]
     public void BuildCacheProperties_contains_all_required_keys()
     {
-        IDictionary<string, string> props = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(
+        IReadOnlyDictionary<string, string> props = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(
             IlSpyOutputMode.CSharpWithIL,
             "/tmp/MyLib.dll",
             "MyNamespace.MyType",
@@ -85,40 +85,32 @@ public class IlSpyExternalSourcesProviderHelpersTests
     [InlineData(IlSpyOutputMode.CSharpWithIL)]
     public void BuildCacheProperties_encodes_mode_as_enum_member_name(IlSpyOutputMode mode)
     {
-        IDictionary<string, string> props = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(mode, "asm", "T", "m", "f.cs");
+        IReadOnlyDictionary<string, string> props = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(mode, "asm", "T", "m", "f.cs");
         Assert.Equal(mode.ToString(), props["RiderIlSpy.Mode"]);
     }
 
+    // The explicit-homeDir overload exists precisely so tests don't have to
+    // mutate the process-wide HOME env var — that pattern races under xunit
+    // parallelism. Passing the home explicitly keeps each fact hermetic.
     [Fact]
     public void RedactHome_replaces_home_prefix_with_tilde()
     {
-        string? previous = Environment.GetEnvironmentVariable("HOME");
-        try
-        {
-            Environment.SetEnvironmentVariable("HOME", "/test/home");
-            string redacted = IlSpyExternalSourcesProviderHelpers.RedactHome("/test/home/projects/foo.dll");
-            Assert.Equal("~/projects/foo.dll", redacted);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("HOME", previous);
-        }
+        string redacted = IlSpyExternalSourcesProviderHelpers.RedactHome("/test/home/projects/foo.dll", "/test/home");
+        Assert.Equal("~/projects/foo.dll", redacted);
     }
 
     [Fact]
     public void RedactHome_leaves_unrelated_paths_unchanged()
     {
-        string? previous = Environment.GetEnvironmentVariable("HOME");
-        try
-        {
-            Environment.SetEnvironmentVariable("HOME", "/test/home");
-            string redacted = IlSpyExternalSourcesProviderHelpers.RedactHome("/opt/dotnet/sdk/foo.dll");
-            Assert.Equal("/opt/dotnet/sdk/foo.dll", redacted);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("HOME", previous);
-        }
+        string redacted = IlSpyExternalSourcesProviderHelpers.RedactHome("/opt/dotnet/sdk/foo.dll", "/test/home");
+        Assert.Equal("/opt/dotnet/sdk/foo.dll", redacted);
+    }
+
+    [Fact]
+    public void RedactHome_returns_path_when_home_is_null_or_empty()
+    {
+        Assert.Equal("/some/path", IlSpyExternalSourcesProviderHelpers.RedactHome("/some/path", null));
+        Assert.Equal("/some/path", IlSpyExternalSourcesProviderHelpers.RedactHome("/some/path", string.Empty));
     }
 
     [Fact]
@@ -128,15 +120,15 @@ public class IlSpyExternalSourcesProviderHelpersTests
     }
 
     [Fact]
-    public void SafeXmlDocPath_changes_extension_to_xml()
+    public void XmlDocPathOrEmpty_changes_extension_to_xml()
     {
-        Assert.Equal("/tmp/MyLib.xml", IlSpyExternalSourcesProviderHelpers.SafeXmlDocPath("/tmp/MyLib.dll"));
+        Assert.Equal("/tmp/MyLib.xml", IlSpyExternalSourcesProviderHelpers.XmlDocPathOrEmpty("/tmp/MyLib.dll"));
     }
 
     [Fact]
-    public void SafeXmlDocPath_returns_empty_for_empty_input()
+    public void XmlDocPathOrEmpty_returns_empty_for_empty_input()
     {
-        Assert.Equal(string.Empty, IlSpyExternalSourcesProviderHelpers.SafeXmlDocPath(string.Empty));
+        Assert.Equal(string.Empty, IlSpyExternalSourcesProviderHelpers.XmlDocPathOrEmpty(string.Empty));
     }
 
     [Fact]
@@ -148,16 +140,15 @@ public class IlSpyExternalSourcesProviderHelpersTests
         Assert.False(string.IsNullOrEmpty(v));
     }
 
+    private static BannerContext Ctx(AssemblyBannerMetadata? meta, IlSpyOutputMode mode = IlSpyOutputMode.CSharp, IReadOnlyList<string>? extraSearchDirs = null)
+        => new BannerContext(meta, "/tmp/MyLib.dll", "MyNs.MyType", mode, extraSearchDirs ?? new string[] { });
+
     [Fact]
     public void WithBannerIfEnabled_returns_content_unchanged_when_disabled()
     {
         string result = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(
             showBanner: false,
-            meta: null,
-            assemblyPath: "/tmp/MyLib.dll",
-            typeFullName: "MyNs.MyType",
-            mode: IlSpyOutputMode.CSharp,
-            extraSearchDirs: new string[] { },
+            ctx: Ctx(meta: null),
             content: "namespace MyNs { class MyType {} }");
         Assert.Equal("namespace MyNs { class MyType {} }", result);
     }
@@ -167,11 +158,7 @@ public class IlSpyExternalSourcesProviderHelpersTests
     {
         string result = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(
             showBanner: true,
-            meta: null,
-            assemblyPath: "/tmp/MyLib.dll",
-            typeFullName: "MyNs.MyType",
-            mode: IlSpyOutputMode.CSharp,
-            extraSearchDirs: new string[] { },
+            ctx: Ctx(meta: null),
             content: "BODY");
         Assert.EndsWith("BODY", result);
         Assert.StartsWith("// Decompiled with RiderIlSpy", result);
@@ -182,12 +169,7 @@ public class IlSpyExternalSourcesProviderHelpersTests
     [Fact]
     public void BuildDiagnosticBanner_emits_path_and_mode_rows_when_meta_is_null()
     {
-        string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(
-            meta: null,
-            assemblyPath: "/tmp/MyLib.dll",
-            typeFullName: "MyNs.MyType",
-            mode: IlSpyOutputMode.IL,
-            extraSearchDirs: new string[] { });
+        string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(Ctx(meta: null, mode: IlSpyOutputMode.IL), sourceLinkOutcome: null);
         Assert.Contains("// Type: MyNs.MyType", banner);
         Assert.Contains("// Mode: IL", banner);
         Assert.Contains("// Assembly location:", banner);
@@ -249,21 +231,17 @@ public class IlSpyExternalSourcesProviderHelpersTests
     }
 
     // SourceLink status surfacing: the 3-overload BuildDiagnosticBanner adds a
-    // "// SourceLink: <status>" line when the status is interesting (i.e. not
-    // "disabled" / "skipped-mode"). These regression tests pin both the
-    // emit-when-interesting and silence-when-not branches so future banner
-    // tweaks don't accidentally leak "disabled" into output or drop a real
-    // "no-pdb" diagnostic on the floor.
+    // "// SourceLink: <status>" line when the outcome is interesting (i.e. not
+    // Disabled / SkippedMode / NotAttempted, which the formatter silences).
+    // These regression tests pin both the emit-when-interesting and
+    // silence-when-not branches so future banner tweaks don't accidentally
+    // leak "disabled" into output or drop a real "no-pdb" diagnostic on the floor.
     [Fact]
     public void BuildDiagnosticBanner_emits_sourcelink_status_when_interesting()
     {
         string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(
-            meta: null,
-            assemblyPath: "/tmp/MyLib.dll",
-            typeFullName: "MyNs.MyType",
-            mode: IlSpyOutputMode.CSharp,
-            extraSearchDirs: new string[] { },
-            sourceLinkStatus: "no-pdb");
+            Ctx(meta: null),
+            sourceLinkOutcome: SourceLinkOutcome.Plain(SourceLinkStatus.NoPdb));
         Assert.Contains("// SourceLink: no-pdb", banner);
     }
 
@@ -271,12 +249,8 @@ public class IlSpyExternalSourcesProviderHelpersTests
     public void BuildDiagnosticBanner_omits_sourcelink_status_when_disabled()
     {
         string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(
-            meta: null,
-            assemblyPath: "/tmp/MyLib.dll",
-            typeFullName: "MyNs.MyType",
-            mode: IlSpyOutputMode.CSharp,
-            extraSearchDirs: new string[] { },
-            sourceLinkStatus: "disabled");
+            Ctx(meta: null),
+            sourceLinkOutcome: SourceLinkOutcome.Plain(SourceLinkStatus.Disabled));
         Assert.DoesNotContain("// SourceLink:", banner);
     }
 
@@ -284,12 +258,8 @@ public class IlSpyExternalSourcesProviderHelpersTests
     public void BuildDiagnosticBanner_omits_sourcelink_status_when_skipped_for_non_csharp_mode()
     {
         string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(
-            meta: null,
-            assemblyPath: "/tmp/MyLib.dll",
-            typeFullName: "MyNs.MyType",
-            mode: IlSpyOutputMode.IL,
-            extraSearchDirs: new string[] { },
-            sourceLinkStatus: "skipped-mode");
+            Ctx(meta: null, mode: IlSpyOutputMode.IL),
+            sourceLinkOutcome: SourceLinkOutcome.Plain(SourceLinkStatus.SkippedMode));
         Assert.DoesNotContain("// SourceLink:", banner);
     }
 
@@ -297,27 +267,18 @@ public class IlSpyExternalSourcesProviderHelpersTests
     public void BuildDiagnosticBanner_emits_sourcelink_used_url()
     {
         string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(
-            meta: null,
-            assemblyPath: "/tmp/MyLib.dll",
-            typeFullName: "MyNs.MyType",
-            mode: IlSpyOutputMode.CSharp,
-            extraSearchDirs: new string[] { },
-            sourceLinkStatus: "used: https://raw.githubusercontent.com/foo/bar/abc/src/T.cs");
+            Ctx(meta: null),
+            sourceLinkOutcome: SourceLinkOutcome.UsedAt("https://raw.githubusercontent.com/foo/bar/abc/src/T.cs"));
         Assert.Contains("// SourceLink: used: https://raw.githubusercontent.com/foo/bar/abc/src/T.cs", banner);
     }
 
     [Fact]
-    public void BuildDiagnosticBanner_null_sourcelink_status_omits_row_for_legacy_callers()
+    public void BuildDiagnosticBanner_null_sourcelink_outcome_omits_row()
     {
-        // The 4-arg overload (no status) must remain banner-compatible — it's
-        // what older callers still go through, and we don't want an empty
-        // "// SourceLink: " line landing in their output.
-        string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(
-            meta: null,
-            assemblyPath: "/tmp/MyLib.dll",
-            typeFullName: "MyNs.MyType",
-            mode: IlSpyOutputMode.CSharp,
-            extraSearchDirs: new string[] { });
+        // Banner must stay compatible for the "no SourceLink fork was attempted"
+        // path (RedecompileAllEntriesAsync) — passing a null outcome should NOT
+        // emit an empty "// SourceLink: " row.
+        string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(Ctx(meta: null), sourceLinkOutcome: null);
         Assert.DoesNotContain("// SourceLink:", banner);
     }
 
@@ -333,16 +294,74 @@ public class IlSpyExternalSourcesProviderHelpersTests
             FileSize: 4096,
             TargetFramework: ".NETCoreApp,Version=v8.0");
         string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(
-            meta: meta,
-            assemblyPath: "/tmp/MyLib.dll",
-            typeFullName: "MyNs.MyType",
-            mode: IlSpyOutputMode.CSharpWithIL,
-            extraSearchDirs: new string[] { "/opt/dotnet/sdk", "/usr/lib/dotnet" });
+            Ctx(meta: meta, mode: IlSpyOutputMode.CSharpWithIL, extraSearchDirs: new string[] { "/opt/dotnet/sdk", "/usr/lib/dotnet" }),
+            sourceLinkOutcome: null);
         Assert.Contains("// Assembly: MyLib, Version=1.2.3.4, Culture=neutral, PublicKeyToken=0123456789abcdef", banner);
         Assert.Contains("// MVID: 11111111-2222-3333-4444-555555555555", banner);
         Assert.Contains("// Target framework: .NETCoreApp,Version=v8.0", banner);
         Assert.Contains("// File size: 4,096 bytes", banner);
         Assert.Contains("// Mode: CSharpWithIL", banner);
         Assert.Contains("/opt/dotnet/sdk, /usr/lib/dotnet", banner);
+    }
+
+    [Fact]
+    public void TryParseDecompileEntryFields_returns_null_when_properties_null()
+    {
+        Assert.Null(IlSpyExternalSourcesProviderHelpers.TryParseDecompileEntryFields(null));
+    }
+
+    [Fact]
+    public void TryParseDecompileEntryFields_returns_null_when_moniker_missing()
+    {
+        Dictionary<string, string> props = new Dictionary<string, string>
+        {
+            ["RiderIlSpy.Assembly"] = "/tmp/a.dll",
+            ["RiderIlSpy.Type"] = "Foo",
+            ["RiderIlSpy.FileName"] = "Foo.cs",
+            ["RiderIlSpy.Mode"] = "CSharp",
+        };
+        Assert.Null(IlSpyExternalSourcesProviderHelpers.TryParseDecompileEntryFields(props));
+    }
+
+    [Fact]
+    public void TryParseDecompileEntryFields_returns_null_when_moniker_empty()
+    {
+        Dictionary<string, string> props = new Dictionary<string, string>
+        {
+            ["RiderIlSpy.Moniker"] = "",
+            ["RiderIlSpy.Assembly"] = "/tmp/a.dll",
+            ["RiderIlSpy.Type"] = "Foo",
+            ["RiderIlSpy.FileName"] = "Foo.cs",
+            ["RiderIlSpy.Mode"] = "CSharp",
+        };
+        Assert.Null(IlSpyExternalSourcesProviderHelpers.TryParseDecompileEntryFields(props));
+    }
+
+    [Fact]
+    public void TryParseDecompileEntryFields_returns_null_when_mode_unparseable()
+    {
+        Dictionary<string, string> props = new Dictionary<string, string>
+        {
+            ["RiderIlSpy.Moniker"] = "m",
+            ["RiderIlSpy.Assembly"] = "/tmp/a.dll",
+            ["RiderIlSpy.Type"] = "Foo",
+            ["RiderIlSpy.FileName"] = "Foo.cs",
+            ["RiderIlSpy.Mode"] = "NotAMode",
+        };
+        Assert.Null(IlSpyExternalSourcesProviderHelpers.TryParseDecompileEntryFields(props));
+    }
+
+    [Fact]
+    public void TryParseDecompileEntryFields_round_trips_BuildCacheProperties()
+    {
+        IReadOnlyDictionary<string, string> props = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(
+            IlSpyOutputMode.CSharpWithIL, "/tmp/lib.dll", "Some.Type.Name", "moniker-1", "Type.cs");
+        DecompileEntryFields? fields = IlSpyExternalSourcesProviderHelpers.TryParseDecompileEntryFields((IDictionary<string, string>)props);
+        Assert.NotNull(fields);
+        Assert.Equal("/tmp/lib.dll", fields!.AssemblyFilePath);
+        Assert.Equal("Some.Type.Name", fields.TypeFullName);
+        Assert.Equal("moniker-1", fields.Moniker);
+        Assert.Equal("Type.cs", fields.FileName);
+        Assert.Equal(IlSpyOutputMode.CSharpWithIL, fields.Mode);
     }
 }

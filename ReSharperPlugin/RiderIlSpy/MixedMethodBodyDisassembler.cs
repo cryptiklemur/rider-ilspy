@@ -36,7 +36,7 @@ internal sealed class MixedMethodBodyDisassembler : MethodBodyDisassembler
             SyntaxTree syntaxTree = decompiler.Decompile(handle);
 
             using StringWriter csOutput = new StringWriter();
-            WriteCode(csOutput, mySettings, syntaxTree);
+            WriteCSharpSyntax(csOutput, mySettings, syntaxTree);
 
             Dictionary<ICSharpCode.Decompiler.IL.ILFunction, List<SequencePoint>> all = decompiler.CreateSequencePoints(syntaxTree);
             KeyValuePair<ICSharpCode.Decompiler.IL.ILFunction, List<SequencePoint>> mapping = all.FirstOrDefault(kvp =>
@@ -84,7 +84,7 @@ internal sealed class MixedMethodBodyDisassembler : MethodBodyDisassembler
         base.WriteInstruction(output, metadata, methodHandle, ref blob, methodRva);
     }
 
-    private static void WriteCode(TextWriter output, DecompilerSettings settings, SyntaxTree syntaxTree)
+    private static void WriteCSharpSyntax(TextWriter output, DecompilerSettings settings, SyntaxTree syntaxTree)
     {
         syntaxTree.AcceptVisitor(new InsertParenthesesVisitor { InsertParenthesesForReadability = true });
         TokenWriter tokenWriter = new TextWriterTokenWriter(output) { IndentationString = settings.CSharpFormattingOptions.IndentationString };
@@ -92,7 +92,12 @@ internal sealed class MixedMethodBodyDisassembler : MethodBodyDisassembler
         syntaxTree.AcceptVisitor(new CSharpOutputVisitor(tokenWriter, settings.CSharpFormattingOptions));
     }
 
-    private static int BinarySearchByOffset(List<SequencePoint> list, int offset)
+    // Internal so dedicated unit tests can pin the binary-search contract:
+    // exact-hit returns the index, miss returns the bitwise complement of the
+    // insertion point — same convention as Array.BinarySearch — which the
+    // WriteInstruction call site relies on when index < 0 means "not at a
+    // sequence-point boundary, skip the C# line emission".
+    internal static int BinarySearchByOffset(List<SequencePoint> list, int offset)
     {
         int lo = 0;
         int hi = list.Count - 1;

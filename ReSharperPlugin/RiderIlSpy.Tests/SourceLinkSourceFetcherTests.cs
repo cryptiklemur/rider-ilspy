@@ -30,7 +30,7 @@ public class SourceLinkSourceFetcherTests
     }
 
     [Fact]
-    public void FetchOrCached_returns_cached_content_without_hitting_network()
+    public void GetOrFetch_returns_cached_content_without_hitting_network()
     {
         // No HTTP handler — any request would throw, so a network roundtrip
         // would fail the test loudly. The cache hit must short-circuit before
@@ -46,7 +46,7 @@ public class SourceLinkSourceFetcherTests
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
             File.WriteAllText(cachePath, "// cached body");
 
-            string? result = fetcher.FetchOrCached(url);
+            string? result = fetcher.GetOrFetch(url);
             Assert.Equal("// cached body", result);
         }
         finally
@@ -56,7 +56,7 @@ public class SourceLinkSourceFetcherTests
     }
 
     [Fact]
-    public void FetchOrCached_downloads_and_caches_on_miss()
+    public void GetOrFetch_downloads_and_caches_on_miss()
     {
         string body = "// remote source body\nclass X {}";
         HttpClient client = new HttpClient(new StubHandler(body, HttpStatusCode.OK));
@@ -66,7 +66,7 @@ public class SourceLinkSourceFetcherTests
             SourceLinkSourceFetcher fetcher = new SourceLinkSourceFetcher(client, root, TimeSpan.FromSeconds(2));
             string url = "https://example.com/remote.cs";
 
-            string? first = fetcher.FetchOrCached(url);
+            string? first = fetcher.GetOrFetch(url);
             Assert.Equal(body, first);
             Assert.True(File.Exists(fetcher.GetCachePath(url)));
             Assert.Equal(body, File.ReadAllText(fetcher.GetCachePath(url)));
@@ -78,14 +78,14 @@ public class SourceLinkSourceFetcherTests
     }
 
     [Fact]
-    public void FetchOrCached_returns_null_on_non_success_status()
+    public void GetOrFetch_returns_null_on_non_success_status()
     {
         HttpClient client = new HttpClient(new StubHandler("not found", HttpStatusCode.NotFound));
         string root = Path.Combine(Path.GetTempPath(), "RiderIlSpyTests-" + Guid.NewGuid().ToString("N"));
         try
         {
             SourceLinkSourceFetcher fetcher = new SourceLinkSourceFetcher(client, root, TimeSpan.FromSeconds(2));
-            string? result = fetcher.FetchOrCached("https://example.com/missing.cs");
+            string? result = fetcher.GetOrFetch("https://example.com/missing.cs");
             Assert.Null(result);
             // A 404 must NOT poison the cache. Otherwise a transient outage
             // turns into permanent failure for subsequent navigations.
@@ -98,13 +98,13 @@ public class SourceLinkSourceFetcherTests
     }
 
     [Fact]
-    public void FetchOrCached_returns_null_when_url_is_empty()
+    public void GetOrFetch_returns_null_when_url_is_empty()
     {
         SourceLinkSourceFetcher fetcher = new SourceLinkSourceFetcher(
             new HttpClient(new BoomHandler()),
             "/tmp/unused",
             TimeSpan.FromSeconds(1));
-        Assert.Null(fetcher.FetchOrCached(""));
+        Assert.Null(fetcher.GetOrFetch(""));
     }
 
     private sealed class StubHandler : HttpMessageHandler

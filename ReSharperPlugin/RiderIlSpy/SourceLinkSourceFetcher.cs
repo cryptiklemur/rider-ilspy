@@ -37,7 +37,7 @@ public sealed class SourceLinkSourceFetcher
     /// otherwise downloads it. Returns <c>null</c> when the cache lookup AND
     /// the download both fail — caller falls back to ILSpy decompilation.
     /// </summary>
-    public string? FetchOrCached(string url, CancellationToken cancellationToken = default)
+    public string? GetOrFetch(string url, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(url)) return null;
         string cachePath = GetCachePath(url);
