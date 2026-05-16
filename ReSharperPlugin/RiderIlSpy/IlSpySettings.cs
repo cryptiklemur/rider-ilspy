@@ -88,15 +88,4 @@ public class IlSpySettings
     // host is unreachable we want to fall back to local decompilation fast.
     [SettingsEntry(5, "SourceLink fetch timeout (seconds)")]
     public int SourceLinkTimeoutSeconds;
-
-    // In CSharpWithIL ("mixed") output mode, prefix each IL instruction that
-    // begins a new C# statement with a machine-readable crosslink marker line
-    // alongside the existing human-readable C# comment. The Kotlin frontend
-    // parses these markers to wire up IL_xxxx ↔ C#-source-line navigation.
-    // Default on because the markers only appear in mixed mode (which is
-    // already an opt-in surface for users who want to see IL alongside C#)
-    // and they're cheap to emit — turning them off only matters if a user is
-    // diffing the disassembly output and wants the comment-only legacy shape.
-    [SettingsEntry(true, "Emit machine-readable crosslink markers in mixed (C# + IL) output")]
-    public bool EmitCrosslinkMarkers;
 }

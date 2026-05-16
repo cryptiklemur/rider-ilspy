@@ -248,6 +248,79 @@ public class IlSpyExternalSourcesProviderHelpersTests
         }
     }
 
+    // SourceLink status surfacing: the 3-overload BuildDiagnosticBanner adds a
+    // "// SourceLink: <status>" line when the status is interesting (i.e. not
+    // "disabled" / "skipped-mode"). These regression tests pin both the
+    // emit-when-interesting and silence-when-not branches so future banner
+    // tweaks don't accidentally leak "disabled" into output or drop a real
+    // "no-pdb" diagnostic on the floor.
+    [Fact]
+    public void BuildDiagnosticBanner_emits_sourcelink_status_when_interesting()
+    {
+        string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(
+            meta: null,
+            assemblyPath: "/tmp/MyLib.dll",
+            typeFullName: "MyNs.MyType",
+            mode: IlSpyOutputMode.CSharp,
+            extraSearchDirs: new string[] { },
+            sourceLinkStatus: "no-pdb");
+        Assert.Contains("// SourceLink: no-pdb", banner);
+    }
+
+    [Fact]
+    public void BuildDiagnosticBanner_omits_sourcelink_status_when_disabled()
+    {
+        string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(
+            meta: null,
+            assemblyPath: "/tmp/MyLib.dll",
+            typeFullName: "MyNs.MyType",
+            mode: IlSpyOutputMode.CSharp,
+            extraSearchDirs: new string[] { },
+            sourceLinkStatus: "disabled");
+        Assert.DoesNotContain("// SourceLink:", banner);
+    }
+
+    [Fact]
+    public void BuildDiagnosticBanner_omits_sourcelink_status_when_skipped_for_non_csharp_mode()
+    {
+        string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(
+            meta: null,
+            assemblyPath: "/tmp/MyLib.dll",
+            typeFullName: "MyNs.MyType",
+            mode: IlSpyOutputMode.IL,
+            extraSearchDirs: new string[] { },
+            sourceLinkStatus: "skipped-mode");
+        Assert.DoesNotContain("// SourceLink:", banner);
+    }
+
+    [Fact]
+    public void BuildDiagnosticBanner_emits_sourcelink_used_url()
+    {
+        string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(
+            meta: null,
+            assemblyPath: "/tmp/MyLib.dll",
+            typeFullName: "MyNs.MyType",
+            mode: IlSpyOutputMode.CSharp,
+            extraSearchDirs: new string[] { },
+            sourceLinkStatus: "used: https://raw.githubusercontent.com/foo/bar/abc/src/T.cs");
+        Assert.Contains("// SourceLink: used: https://raw.githubusercontent.com/foo/bar/abc/src/T.cs", banner);
+    }
+
+    [Fact]
+    public void BuildDiagnosticBanner_null_sourcelink_status_omits_row_for_legacy_callers()
+    {
+        // The 4-arg overload (no status) must remain banner-compatible — it's
+        // what older callers still go through, and we don't want an empty
+        // "// SourceLink: " line landing in their output.
+        string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(
+            meta: null,
+            assemblyPath: "/tmp/MyLib.dll",
+            typeFullName: "MyNs.MyType",
+            mode: IlSpyOutputMode.CSharp,
+            extraSearchDirs: new string[] { });
+        Assert.DoesNotContain("// SourceLink:", banner);
+    }
+
     [Fact]
     public void BuildDiagnosticBanner_emits_full_metadata_when_meta_is_present()
     {

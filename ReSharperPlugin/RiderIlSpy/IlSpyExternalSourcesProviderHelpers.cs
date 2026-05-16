@@ -157,9 +157,18 @@ internal static class IlSpyExternalSourcesProviderHelpers
     // Fetching AssemblyBannerMetadata stays at the caller because it depends on
     // IlSpyDecompiler (a ReSharper SDK component); this helper itself is pure.
     public static string WithBannerIfEnabled(bool showBanner, AssemblyBannerMetadata? meta, string assemblyPath, string typeFullName, IlSpyOutputMode mode, IReadOnlyList<string> extraSearchDirs, string content)
+        => WithBannerIfEnabled(showBanner, meta, assemblyPath, typeFullName, mode, extraSearchDirs, sourceLinkStatus: null, content);
+
+    /// <summary>
+    /// Banner overload that surfaces a SourceLink fetch status row. When the
+    /// status is non-null and the show-banner setting is on, the banner gets
+    /// an extra <c>// SourceLink: &lt;status&gt;</c> line so users can tell
+    /// why the original source wasn't used without grepping idea.log.
+    /// </summary>
+    public static string WithBannerIfEnabled(bool showBanner, AssemblyBannerMetadata? meta, string assemblyPath, string typeFullName, IlSpyOutputMode mode, IReadOnlyList<string> extraSearchDirs, string? sourceLinkStatus, string content)
     {
         if (!showBanner) return content;
-        return BuildDiagnosticBanner(meta, assemblyPath, typeFullName, mode, extraSearchDirs) + content;
+        return BuildDiagnosticBanner(meta, assemblyPath, typeFullName, mode, extraSearchDirs, sourceLinkStatus) + content;
     }
 
     // Mirrors the JetBrains decompiler banner shape so output is visually familiar:
@@ -177,6 +186,9 @@ internal static class IlSpyExternalSourcesProviderHelpers
     // we still emit the path/mode rows so the banner remains useful (e.g. for
     // diagnosing assembly resolution).
     public static string BuildDiagnosticBanner(AssemblyBannerMetadata? meta, string assemblyPath, string typeFullName, IlSpyOutputMode mode, IReadOnlyList<string> extraSearchDirs)
+        => BuildDiagnosticBanner(meta, assemblyPath, typeFullName, mode, extraSearchDirs, sourceLinkStatus: null);
+
+    public static string BuildDiagnosticBanner(AssemblyBannerMetadata? meta, string assemblyPath, string typeFullName, IlSpyOutputMode mode, IReadOnlyList<string> extraSearchDirs, string? sourceLinkStatus)
     {
         string xmlDocPath = SafeXmlDocPath(assemblyPath);
         bool xmlExists = !string.IsNullOrEmpty(xmlDocPath) && File.Exists(xmlDocPath);
@@ -199,7 +211,17 @@ internal static class IlSpyExternalSourcesProviderHelpers
         sb.Append("// Mode: ").Append(mode).Append('\n');
         sb.Append("// Extra search dirs: ")
           .Append(extraSearchDirs.Count == 0 ? "(none)" : string.Join(", ", extraSearchDirs.Select(RedactHome)))
-          .Append("\n\n");
+          .Append('\n');
+        // SourceLink status: only emitted when an explicit attempt was made
+        // ("disabled" / "skipped-mode" are silenced — the user can read the
+        // Mode line and infer the rest). Other statuses are interesting
+        // diagnostics ("no-pdb", "no-sourcelink-entry-in-pdb", "used: <url>",
+        // etc.) and answer "why did SourceLink not kick in?" inline.
+        if (!string.IsNullOrEmpty(sourceLinkStatus) && sourceLinkStatus != "disabled" && sourceLinkStatus != "skipped-mode")
+        {
+            sb.Append("// SourceLink: ").Append(sourceLinkStatus).Append('\n');
+        }
+        sb.Append('\n');
         return sb.ToString();
     }
 }

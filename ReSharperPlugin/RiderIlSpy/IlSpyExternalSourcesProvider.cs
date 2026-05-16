@@ -14,12 +14,15 @@ using ICSharpCode.Decompiler.CSharp;
 using JetBrains.Application.Parts;
 using JetBrains.Application.Progress;
 using JetBrains.Application.Settings;
+using JetBrains.Application.Threading;
 using JetBrains.DataFlow;
 using JetBrains.Lifetimes;
 using JetBrains.Metadata.Debug;
 using JetBrains.Metadata.Reader.API;
 using JetBrains.ProjectModel;
 using JetBrains.ProjectModel.Model2.Assemblies.Interfaces;
+using JetBrains.Rd;
+using JetBrains.Rd.Base;
 using JetBrains.Rd.Tasks;
 using JetBrains.ReSharper.Feature.Services.ExternalSource;
 using JetBrains.ReSharper.Feature.Services.ExternalSources.Core;
@@ -44,6 +47,8 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     private readonly INavigationDecompilationCache myCache;
     private readonly IlSpyDecompiler myDecompiler;
     private readonly IContextBoundSettingsStoreLive mySettings;
+    private readonly IShellLocks myShellLocks;
+    private readonly Lifetime myLifetime;
     private readonly ConcurrentDictionary<string, TypeDecompileEntry> myEntries = new ConcurrentDictionary<string, TypeDecompileEntry>();
     private readonly object myEntriesAccessLock = new object();
     private readonly LinkedList<string> myEntriesOrder = new LinkedList<string>();
@@ -51,10 +56,12 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     private CancellationTokenSource? myActiveRedecompileCts;
     private readonly object myRedecompileLock = new object();
 
-    public IlSpyExternalSourcesProvider(Lifetime lifetime, ISolution solution, ISettingsStore settingsStore, INavigationDecompilationCache cache, IlSpyDecompiler decompiler)
+    public IlSpyExternalSourcesProvider(Lifetime lifetime, ISolution solution, ISettingsStore settingsStore, INavigationDecompilationCache cache, IlSpyDecompiler decompiler, IShellLocks shellLocks)
     {
         myCache = cache;
         myDecompiler = decompiler;
+        myShellLocks = shellLocks;
+        myLifetime = lifetime;
         mySettings = settingsStore.BindToContextLive(lifetime, ContextRange.ApplicationWide);
         myRiderIlSpyModel = solution.GetProtocolSolution().GetRiderIlSpyModel();
         myRiderIlSpyModel.Mode.Advise(lifetime, OnRiderIlSpyModeChanged);
@@ -261,10 +268,15 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             bool showBanner = mySettings.GetValue((IlSpySettings s) => s.ShowDiagnosticBanner);
             bool preferSourceLink = mySettings.GetValue((IlSpySettings s) => s.PreferSourceLink);
             int sourceLinkTimeout = mySettings.GetValue((IlSpySettings s) => s.SourceLinkTimeoutSeconds);
-            bool emitCrosslinkMarkers = mySettings.GetValue((IlSpySettings s) => s.EmitCrosslinkMarkers);
 
             string content = string.Empty;
             bool fromSourceLink = false;
+            // SourceLink fetch status — surfaced in the banner so users can tell
+            // why we fell back to ILSpy without grepping idea.log. Stays at
+            // "disabled" or "skipped-mode" when we never even attempt the fetch.
+            string sourceLinkStatus = preferSourceLink
+                ? (mode == IlSpyOutputMode.CSharp ? "not-attempted" : "skipped-mode")
+                : "disabled";
             using ManualResetEventSlim doneSignal = new ManualResetEventSlim(false);
             taskExecutor.ExecuteTask("Decompiling " + top.ShortName + " with ILSpy", TaskCancelable.Yes, _ =>
             {
@@ -275,15 +287,16 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
                     // of how good the SourceLink source is.
                     if (preferSourceLink && mode == IlSpyOutputMode.CSharp)
                     {
-                        string? sourceLinkContent = myDecompiler.TryGetSourceLinkSource(assemblyFile.FullPath, fullName, sourceLinkTimeout);
-                        if (!string.IsNullOrEmpty(sourceLinkContent))
+                        IlSpyDecompiler.SourceLinkAttempt attempt = myDecompiler.FetchSourceLink(assemblyFile.FullPath, fullName, sourceLinkTimeout);
+                        sourceLinkStatus = attempt.Status;
+                        if (attempt.Content != null)
                         {
-                            content = sourceLinkContent;
+                            content = attempt.Content;
                             fromSourceLink = true;
                             return;
                         }
                     }
-                    content = myDecompiler.DecompileType(assemblyFile.FullPath, fullName, decompilerSettings, extraSearchDirs, mode, emitCrosslinkMarkers);
+                    content = myDecompiler.DecompileType(assemblyFile.FullPath, fullName, decompilerSettings, extraSearchDirs, mode);
                 }
                 finally
                 {
@@ -300,7 +313,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             if (!fromSourceLink)
             {
                 AssemblyBannerMetadata? bannerMeta = showBanner ? myDecompiler.GetAssemblyBannerMetadata(assemblyFile.FullPath) : null;
-                content = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(showBanner, bannerMeta, assemblyFile.FullPath, fullName, mode, extraSearchDirs, content);
+                content = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(showBanner, bannerMeta, assemblyFile.FullPath, fullName, mode, extraSearchDirs, sourceLinkStatus, content);
             }
             IDictionary<string, string> properties = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(mode, assemblyFile.FullPath, fullName, moniker, fileName);
             DecompilationCacheItem? result = myCache.PutCacheItem(Id, assembly, moniker, fileName, properties, content, sourceDebugData: null);
@@ -386,8 +399,16 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             try
             {
                 await Task.Delay(75, newCts.Token).ConfigureAwait(false);
-                RedecompileAllEntries(newCts.Token);
-                myRiderIlSpyModel.ReadyTick.Fire(DateTime.UtcNow.Ticks);
+                await RedecompileAllEntriesAsync(newCts.Token).ConfigureAwait(false);
+                // RD signals must fire on the protocol's Shell Rd Dispatcher, never
+                // on a .NET thread-pool worker — firing from off-thread trips an
+                // assertion in rd's FrontendBackend and the readyTick is dropped,
+                // so the status-bar widget never sees the mode change complete.
+                // Queue() schedules the Fire onto the protocol scheduler regardless
+                // of which thread we end up on after the awaits above.
+                IProtocol? protocol = ((IRdDynamic)myRiderIlSpyModel).TryGetProto();
+                if (protocol != null)
+                    protocol.Scheduler.Queue(() => myRiderIlSpyModel.ReadyTick.Fire(DateTime.UtcNow.Ticks));
             }
             catch (OperationCanceledException)
             {
@@ -420,7 +441,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         try { cts.Dispose(); } catch (ObjectDisposedException) { /* already disposed by a concurrent cancel-and-swap path */ }
     }
 
-    private void RedecompileAllEntries(CancellationToken cancellationToken)
+    private async Task RedecompileAllEntriesAsync(CancellationToken cancellationToken)
     {
         if (myEntries.IsEmpty) return;
 
@@ -428,7 +449,6 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         DecompilerSettings decompilerSettings = BuildDecompilerSettings();
         IReadOnlyList<string> extraSearchDirs = GetExtraSearchDirs();
         bool showBanner = mySettings.GetValue((IlSpySettings s) => s.ShowDiagnosticBanner);
-        bool emitCrosslinkMarkers = mySettings.GetValue((IlSpySettings s) => s.EmitCrosslinkMarkers);
 
         foreach (KeyValuePair<string, TypeDecompileEntry> kv in myEntries)
         {
@@ -436,12 +456,28 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             TypeDecompileEntry entry = kv.Value;
             try
             {
-                string content = myDecompiler.DecompileType(entry.AssemblyFilePath, entry.TypeFullName, decompilerSettings, extraSearchDirs, mode, emitCrosslinkMarkers);
+                // Decompilation is pure CPU work — keep it on the worker thread.
+                // The read lock is only needed for PutCacheItem below, which
+                // touches Rider's project-model-backed cache.
+                string content = myDecompiler.DecompileType(entry.AssemblyFilePath, entry.TypeFullName, decompilerSettings, extraSearchDirs, mode);
                 AssemblyBannerMetadata? bannerMeta = showBanner ? myDecompiler.GetAssemblyBannerMetadata(entry.AssemblyFilePath) : null;
                 content = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(showBanner, bannerMeta, entry.AssemblyFilePath, entry.TypeFullName, mode, extraSearchDirs, content);
 
                 IDictionary<string, string> properties = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(mode, entry.AssemblyFilePath, entry.TypeFullName, entry.Moniker, entry.FileName);
-                myCache.PutCacheItem(Id, entry.Assembly, entry.Moniker, entry.FileName, properties, content, sourceDebugData: null);
+
+                // PutCacheItem requires a reader lock (it walks the assembly's
+                // project-model entry). Holding ReadLockCookie.Create() across
+                // the call is the wrong primitive — Rider explicitly forbids it
+                // because it isn't interruptible during WriteLock acquisition.
+                // StartReadActionAsync schedules the call through the
+                // interruptible read-action path and returns a Task we can await.
+                TypeDecompileEntry capturedEntry = entry;
+                string capturedContent = content;
+                IDictionary<string, string> capturedProperties = properties;
+                await ReadActionUtil.StartReadActionAsync(
+                    myShellLocks,
+                    myLifetime,
+                    () => myCache.PutCacheItem(Id, capturedEntry.Assembly, capturedEntry.Moniker, capturedEntry.FileName, capturedProperties, capturedContent, sourceDebugData: null)).ConfigureAwait(false);
                 entry.Mode = mode;
             }
             catch (OperationCanceledException)

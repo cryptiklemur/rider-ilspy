@@ -96,35 +96,80 @@ public class IlSpyDecompiler
     /// - No mapping rule in the SourceLink JSON covers the document path.
     /// - The HTTP fetch fails (404, timeout, DNS failure, etc.).
     /// </remarks>
-    public string? TryGetSourceLinkSource(string assemblyPath, string typeFullName, int timeoutSeconds, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Result of a SourceLink fetch attempt. <see cref="Content"/> is the source
+    /// text when the fetch succeeded; otherwise it's <c>null</c> and
+    /// <see cref="Status"/> describes which step bailed (suitable for surfacing
+    /// in the diagnostic banner so the user can see why we fell back to ILSpy).
+    /// </summary>
+    public sealed record SourceLinkAttempt(string? Content, string Status);
+
+    /// <summary>
+    /// Same fetch flow as <see cref="TryGetSourceLinkSource"/> but returns a
+    /// status string explaining the outcome — used by the diagnostic banner so
+    /// "why didn't SourceLink kick in?" is answerable without grepping
+    /// idea.log. Statuses are stable identifiers, not human prose, so callers
+    /// can pattern-match if they care.
+    /// </summary>
+    public SourceLinkAttempt FetchSourceLink(string assemblyPath, string typeFullName, int timeoutSeconds, CancellationToken cancellationToken = default)
     {
         if (timeoutSeconds <= 0) timeoutSeconds = 5;
         try
         {
             using PdbSourceLinkReader? pdb = PdbSourceLinkReader.TryOpen(assemblyPath);
-            if (pdb == null) return null;
+            if (pdb == null)
+            {
+                ourLogger.Info("RiderIlSpy.SourceLink: no portable PDB found for " + assemblyPath);
+                return new SourceLinkAttempt(null, "no-pdb");
+            }
             string? json = pdb.TryReadSourceLinkJson();
-            if (json == null) return null;
+            if (json == null)
+            {
+                ourLogger.Info("RiderIlSpy.SourceLink: PDB has no SourceLink CustomDebugInformation entry for " + typeFullName);
+                return new SourceLinkAttempt(null, "no-sourcelink-entry-in-pdb");
+            }
             SourceLinkMapping? mapping = SourceLinkMapping.TryParse(json);
-            if (mapping == null) return null;
+            if (mapping == null)
+            {
+                ourLogger.Warn("RiderIlSpy.SourceLink: malformed JSON in PDB for " + typeFullName);
+                return new SourceLinkAttempt(null, "malformed-sourcelink-json");
+            }
             string? documentPath = pdb.TryGetPrimaryDocumentPath(typeFullName);
-            if (string.IsNullOrEmpty(documentPath)) return null;
+            if (string.IsNullOrEmpty(documentPath))
+            {
+                ourLogger.Info("RiderIlSpy.SourceLink: no primary document for type " + typeFullName + " (partial class or no PDB rows)");
+                return new SourceLinkAttempt(null, "no-document-for-type");
+            }
             string? url = mapping.ResolveUrl(documentPath);
-            if (string.IsNullOrEmpty(url)) return null;
+            if (string.IsNullOrEmpty(url))
+            {
+                ourLogger.Info("RiderIlSpy.SourceLink: no URL mapping for document " + documentPath);
+                return new SourceLinkAttempt(null, "no-url-for-document");
+            }
             string cacheRoot = Path.Combine(Path.GetTempPath(), "RiderIlSpy", "sourcelink-cache");
             SourceLinkSourceFetcher fetcher = new SourceLinkSourceFetcher(ourSharedHttpClient, cacheRoot, TimeSpan.FromSeconds(timeoutSeconds));
-            return fetcher.FetchOrCached(url, cancellationToken);
+            string? fetched = fetcher.FetchOrCached(url, cancellationToken);
+            if (string.IsNullOrEmpty(fetched))
+            {
+                ourLogger.Info("RiderIlSpy.SourceLink: HTTP fetch returned empty for " + url);
+                return new SourceLinkAttempt(null, "http-fetch-failed");
+            }
+            ourLogger.Info("RiderIlSpy.SourceLink: fetched " + url);
+            return new SourceLinkAttempt(fetched, "used: " + url);
         }
         catch (Exception ex)
         {
             // Defensive: we never want a SourceLink lookup to bubble up. Any
             // failure here just means "fall back to decompile" upstream.
-            ourLogger.Warn("RiderIlSpy.TryGetSourceLinkSource for " + typeFullName + " threw: " + ex.GetType().Name + ": " + ex.Message);
-            return null;
+            ourLogger.Warn("RiderIlSpy.FetchSourceLink for " + typeFullName + " threw: " + ex.GetType().Name + ": " + ex.Message);
+            return new SourceLinkAttempt(null, "exception: " + ex.GetType().Name);
         }
     }
 
-    public string DecompileType(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs = null, IlSpyOutputMode mode = IlSpyOutputMode.CSharp, bool emitCrosslinkMarkers = true)
+    public string? TryGetSourceLinkSource(string assemblyPath, string typeFullName, int timeoutSeconds, CancellationToken cancellationToken = default)
+        => FetchSourceLink(assemblyPath, typeFullName, timeoutSeconds, cancellationToken).Content;
+
+    public string DecompileType(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs = null, IlSpyOutputMode mode = IlSpyOutputMode.CSharp)
     {
         try
         {
@@ -133,7 +178,7 @@ public class IlSpyDecompiler
                 case IlSpyOutputMode.IL:
                     return DisassembleToIl(assemblyPath, typeFullName, settings, extraSearchDirs);
                 case IlSpyOutputMode.CSharpWithIL:
-                    return DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs, emitCrosslinkMarkers);
+                    return DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs);
                 default:
                     return DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs);
             }
@@ -151,7 +196,7 @@ public class IlSpyDecompiler
             {
                 bool wantMixed = mode == IlSpyOutputMode.CSharpWithIL;
                 return wantMixed
-                    ? DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs, emitCrosslinkMarkers)
+                    ? DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs)
                     : DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs);
             }
             catch (System.Exception retryEx)
@@ -418,7 +463,7 @@ public class IlSpyDecompiler
         return decompiler.DecompileTypeAsString(ftn);
     }
 
-    private static string DisassembleMixed(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs, bool emitCrosslinkMarkers = true)
+    private static string DisassembleMixed(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs)
     {
         using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
         UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, settings, extraSearchDirs);
@@ -428,7 +473,7 @@ public class IlSpyDecompiler
 
         using StringWriter sw = new StringWriter();
         PlainTextOutput output = new PlainTextOutput(sw);
-        MixedMethodBodyDisassembler bodyDisassembler = new MixedMethodBodyDisassembler(output, CancellationToken.None, settings, resolver, emitCrosslinkMarkers)
+        MixedMethodBodyDisassembler bodyDisassembler = new MixedMethodBodyDisassembler(output, CancellationToken.None, settings, resolver)
         {
             DetectControlStructure = true,
             ShowSequencePoints = false,
