@@ -259,13 +259,29 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             DecompilerSettings decompilerSettings = BuildDecompilerSettings();
             IReadOnlyList<string> extraSearchDirs = GetExtraSearchDirs();
             bool showBanner = mySettings.GetValue((IlSpySettings s) => s.ShowDiagnosticBanner);
+            bool preferSourceLink = mySettings.GetValue((IlSpySettings s) => s.PreferSourceLink);
+            int sourceLinkTimeout = mySettings.GetValue((IlSpySettings s) => s.SourceLinkTimeoutSeconds);
 
             string content = string.Empty;
+            bool fromSourceLink = false;
             using ManualResetEventSlim doneSignal = new ManualResetEventSlim(false);
             taskExecutor.ExecuteTask("Decompiling " + top.ShortName + " with ILSpy", TaskCancelable.Yes, _ =>
             {
                 try
                 {
+                    // SourceLink fallback only applies to plain C# output. IL
+                    // and mixed-mode views need ILSpy's disassembler regardless
+                    // of how good the SourceLink source is.
+                    if (preferSourceLink && mode == IlSpyOutputMode.CSharp)
+                    {
+                        string? sourceLinkContent = myDecompiler.TryGetSourceLinkSource(assemblyFile.FullPath, fullName, sourceLinkTimeout);
+                        if (!string.IsNullOrEmpty(sourceLinkContent))
+                        {
+                            content = sourceLinkContent;
+                            fromSourceLink = true;
+                            return;
+                        }
+                    }
                     content = myDecompiler.DecompileType(assemblyFile.FullPath, fullName, decompilerSettings, extraSearchDirs, mode);
                 }
                 finally
@@ -276,8 +292,15 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
 
             if (!doneSignal.Wait(TimeSpan.FromMinutes(2))) return null;
 
-            AssemblyBannerMetadata? bannerMeta = showBanner ? myDecompiler.GetAssemblyBannerMetadata(assemblyFile.FullPath) : null;
-            content = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(showBanner, bannerMeta, assemblyFile.FullPath, fullName, mode, extraSearchDirs, content);
+            // Banner is only meaningful for ILSpy output. SourceLink already
+            // returns the upstream file verbatim — prepending decompile
+            // diagnostics there would just shift the real line numbers down
+            // (annoying for "go to line N" navigation) without adding signal.
+            if (!fromSourceLink)
+            {
+                AssemblyBannerMetadata? bannerMeta = showBanner ? myDecompiler.GetAssemblyBannerMetadata(assemblyFile.FullPath) : null;
+                content = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(showBanner, bannerMeta, assemblyFile.FullPath, fullName, mode, extraSearchDirs, content);
+            }
             IDictionary<string, string> properties = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(mode, assemblyFile.FullPath, fullName, moniker, fileName);
             DecompilationCacheItem? result = myCache.PutCacheItem(Id, assembly, moniker, fileName, properties, content, sourceDebugData: null);
             if (result != null)

@@ -52,5 +52,10 @@ public class IlSpyOptionsPage : BeSimpleOptionsPage
             IlSpyLanguageVersion.CSharp7_3 => "C# 7.3",
             _ => v.ToString(),
         });
+
+        AddHeader("SourceLink");
+        AddCommentText("When an assembly's PDB declares SourceLink (e.g. .NET BCL, most modern NuGet packages), fetch the published original source instead of decompiling.");
+        AddBoolOption((IlSpySettings s) => s.PreferSourceLink, "Prefer original source via SourceLink when available", null);
+        AddIntOption((IlSpySettings s) => s.SourceLinkTimeoutSeconds, "Fetch timeout (seconds):");
     }
 }

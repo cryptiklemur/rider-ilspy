@@ -72,4 +72,20 @@ public class IlSpySettings
     // existing installs see no change.
     [SettingsEntry(IlSpyLanguageVersion.Latest, "Target C# language version for decompiled output")]
     public IlSpyLanguageVersion LanguageVersion;
+
+    // When enabled and the assembly's PDB carries a SourceLink CustomDebugInformation
+    // entry, the backend fetches the original source from the published URL
+    // (typically a Git host like raw.githubusercontent.com) instead of running
+    // ILSpy. Improves fidelity dramatically for libraries that ship SourceLink
+    // (.NET BCL, most NuGet packages built after ~2020). Off-by-default would
+    // be surprising for users who have come to expect SourceLink in
+    // dotPeek/Visual Studio.
+    [SettingsEntry(true, "Prefer original source via SourceLink when available")]
+    public bool PreferSourceLink;
+
+    // Network timeout for SourceLink source fetches, in seconds. A short
+    // timeout matters more than a long one — when the user is offline or the
+    // host is unreachable we want to fall back to local decompilation fast.
+    [SettingsEntry(5, "SourceLink fetch timeout (seconds)")]
+    public int SourceLinkTimeoutSeconds;
 }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Reflection.Metadata;
@@ -61,6 +62,67 @@ public sealed record DecompileAssemblyToProjectResult(
 public class IlSpyDecompiler
 {
     private static readonly ILogger ourLogger = Logger.GetLogger<IlSpyDecompiler>();
+
+    // Single HttpClient instance reused across SourceLink fetches. HttpClient is
+    // documented as designed to be long-lived; creating one per fetch leaks TCP
+    // sockets on .NET Core and triggers SocketException after a few thousand
+    // requests under sustained navigation.
+    private static readonly HttpClient ourSharedHttpClient = CreateSharedHttpClient();
+
+    private static HttpClient CreateSharedHttpClient()
+    {
+        HttpClient client = new HttpClient();
+        // raw.githubusercontent.com (the most common SourceLink target) accepts
+        // anonymous GETs without a User-Agent, but other Git hosts (e.g. some
+        // self-hosted Gitea) reject empty UAs. Identifying ourselves keeps the
+        // fetch unblocked on any vendor's traffic-filter.
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("RiderIlSpy/1.0 (+https://github.com/cryptiklemur/rider-ilspy)");
+        return client;
+    }
+
+    /// <summary>
+    /// When <paramref name="assemblyPath"/>'s portable PDB carries a SourceLink
+    /// CustomDebugInformation entry, looks up <paramref name="typeFullName"/>'s
+    /// primary source document, fetches it from the published URL, and returns
+    /// its content. Returns <c>null</c> on any failure — caller falls back to
+    /// ILSpy decompilation.
+    /// </summary>
+    /// <remarks>
+    /// Returns null when:
+    /// - The PDB is missing, non-portable, or unreadable.
+    /// - The PDB has no SourceLink entry, or its JSON is malformed.
+    /// - The type spans multiple documents (partial class). Picking one of N
+    ///   files would surface only part of the type and confuse navigation.
+    /// - No mapping rule in the SourceLink JSON covers the document path.
+    /// - The HTTP fetch fails (404, timeout, DNS failure, etc.).
+    /// </remarks>
+    public string? TryGetSourceLinkSource(string assemblyPath, string typeFullName, int timeoutSeconds, CancellationToken cancellationToken = default)
+    {
+        if (timeoutSeconds <= 0) timeoutSeconds = 5;
+        try
+        {
+            using PdbSourceLinkReader? pdb = PdbSourceLinkReader.TryOpen(assemblyPath);
+            if (pdb == null) return null;
+            string? json = pdb.TryReadSourceLinkJson();
+            if (json == null) return null;
+            SourceLinkMapping? mapping = SourceLinkMapping.TryParse(json);
+            if (mapping == null) return null;
+            string? documentPath = pdb.TryGetPrimaryDocumentPath(typeFullName);
+            if (string.IsNullOrEmpty(documentPath)) return null;
+            string? url = mapping.ResolveUrl(documentPath);
+            if (string.IsNullOrEmpty(url)) return null;
+            string cacheRoot = Path.Combine(Path.GetTempPath(), "RiderIlSpy", "sourcelink-cache");
+            SourceLinkSourceFetcher fetcher = new SourceLinkSourceFetcher(ourSharedHttpClient, cacheRoot, TimeSpan.FromSeconds(timeoutSeconds));
+            return fetcher.FetchOrCached(url, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // Defensive: we never want a SourceLink lookup to bubble up. Any
+            // failure here just means "fall back to decompile" upstream.
+            ourLogger.Warn("RiderIlSpy.TryGetSourceLinkSource for " + typeFullName + " threw: " + ex.GetType().Name + ": " + ex.Message);
+            return null;
+        }
+    }
 
     public string DecompileType(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs = null, IlSpyOutputMode mode = IlSpyOutputMode.CSharp)
     {
