@@ -22,7 +22,7 @@ public class IlSpySearchPersistenceTests
             IlSpySearchIndex? read = new IlSpySearchPersistence().Load(tmp);
             Assert.NotNull(read);
             System.Collections.Generic.List<LiteralIndexEntry> hits = read!.LookupLiteralCandidatesByTrigram("hel", false);
-            Assert.Equal(1, hits.Count);
+            Assert.Single(hits);
         }
         finally { File.Delete(tmp); }
     }
@@ -42,7 +42,7 @@ public class IlSpySearchPersistenceTests
             IlSpySearchIndex? read = new IlSpySearchPersistence().Load(tmp);
             Assert.NotNull(read);
             System.Collections.Generic.List<AttributeIndexEntry> hits = read!.LookupAttributesByFqn("System.ObsoleteAttribute");
-            Assert.Equal(1, hits.Count);
+            Assert.Single(hits);
             Assert.Equal("ObsoleteAttribute", hits[0].AttributeTypeShortName);
         }
         finally { File.Delete(tmp); }

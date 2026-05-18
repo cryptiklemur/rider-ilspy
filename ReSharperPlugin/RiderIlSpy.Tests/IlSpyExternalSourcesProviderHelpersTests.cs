@@ -351,6 +351,182 @@ public class IlSpyExternalSourcesProviderHelpersTests
         Assert.Null(IlSpyExternalSourcesProviderHelpers.TryParseDecompileEntryFields(props));
     }
 
+    // InitialSourceLinkOutcome chooses the banner-visible SourceLink status
+    // BEFORE the fetch runs, so the user can tell from the banner why
+    // SourceLink didn't contribute. Three branches; all three pinned here.
+
+    [Fact]
+    public void InitialSourceLinkOutcome_returns_Disabled_when_preferSourceLink_is_false()
+    {
+        SourceLinkOutcome outcome = IlSpyExternalSourcesProviderHelpers.InitialSourceLinkOutcome(preferSourceLink: false, mode: IlSpyOutputMode.CSharp);
+        Assert.Equal(SourceLinkStatus.Disabled, outcome.Status);
+    }
+
+    [Fact]
+    public void InitialSourceLinkOutcome_returns_SkippedMode_for_IL_mode_even_when_preferSourceLink_is_true()
+    {
+        SourceLinkOutcome outcome = IlSpyExternalSourcesProviderHelpers.InitialSourceLinkOutcome(preferSourceLink: true, mode: IlSpyOutputMode.IL);
+        Assert.Equal(SourceLinkStatus.SkippedMode, outcome.Status);
+    }
+
+    [Fact]
+    public void InitialSourceLinkOutcome_returns_SkippedMode_for_CSharpWithIL_mode()
+    {
+        // CSharpWithIL is not pure C#, so SourceLink (which delivers C#-only
+        // sources) doesn't apply — the choice mirrors IL-only mode.
+        SourceLinkOutcome outcome = IlSpyExternalSourcesProviderHelpers.InitialSourceLinkOutcome(preferSourceLink: true, mode: IlSpyOutputMode.CSharpWithIL);
+        Assert.Equal(SourceLinkStatus.SkippedMode, outcome.Status);
+    }
+
+    [Fact]
+    public void InitialSourceLinkOutcome_returns_NotAttempted_when_preferSourceLink_and_CSharp_mode()
+    {
+        SourceLinkOutcome outcome = IlSpyExternalSourcesProviderHelpers.InitialSourceLinkOutcome(preferSourceLink: true, mode: IlSpyOutputMode.CSharp);
+        Assert.Equal(SourceLinkStatus.NotAttempted, outcome.Status);
+    }
+
+    // IsRefAssemblyPath: pure heuristic for "this path points at a reference-
+    // only assembly". The three accepted markers are the canonical SDK shapes.
+
+    [Theory]
+    [InlineData("/usr/share/dotnet/sdk/8.0.100/ref/Microsoft.NETCore.App.dll")]
+    [InlineData("C:\\Program Files\\dotnet\\packs\\ref\\System.dll")]
+    [InlineData("/home/u/.nuget/packages/runtime.linux-x64.microsoft.netcore.app/8.0.0/runtimes/linux-x64/lib/net8.0/.ref/Foo.dll")]
+    public void IsRefAssemblyPath_recognises_canonical_ref_markers(string path)
+    {
+        Assert.True(IlSpyExternalSourcesProviderHelpers.IsRefAssemblyPath(path));
+    }
+
+    [Theory]
+    [InlineData("/usr/share/dotnet/shared/Microsoft.NETCore.App/8.0.0/System.Private.CoreLib.dll")]
+    [InlineData("C:\\Program Files\\dotnet\\shared\\Microsoft.NETCore.App\\8.0.0\\System.dll")]
+    [InlineData("/home/u/projects/MyLib/bin/Debug/MyLib.dll")]
+    public void IsRefAssemblyPath_rejects_implementation_paths(string path)
+    {
+        Assert.False(IlSpyExternalSourcesProviderHelpers.IsRefAssemblyPath(path));
+    }
+
+    [Fact]
+    public void IsRefAssemblyPath_returns_false_for_null_or_empty()
+    {
+        Assert.False(IlSpyExternalSourcesProviderHelpers.IsRefAssemblyPath(null!));
+        Assert.False(IlSpyExternalSourcesProviderHelpers.IsRefAssemblyPath(string.Empty));
+    }
+
+    // ParseExtraSearchDirs is the split-and-accumulate wrapper around
+    // TryNormalizeSearchDir. Lives in the helpers class so the wiring
+    // (delimiter, accumulator, warn-on-rejection) is unit-testable without
+    // pulling in IlSpyRequestSettingsBuilder's IContextBoundSettingsStoreLive
+    // dependency. The delimiter is Path.PathSeparator — ';' on Windows,
+    // ':' on Linux/macOS — chosen to mirror each platform's PATH convention.
+
+    [Fact]
+    public void ParseExtraSearchDirs_returns_empty_for_null_raw()
+    {
+        List<string> warnings = new List<string>();
+        IReadOnlyList<string> result = IlSpyExternalSourcesProviderHelpers.ParseExtraSearchDirs(null, warnings.Add);
+        Assert.Empty(result);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void ParseExtraSearchDirs_returns_empty_for_empty_raw()
+    {
+        List<string> warnings = new List<string>();
+        IReadOnlyList<string> result = IlSpyExternalSourcesProviderHelpers.ParseExtraSearchDirs("", warnings.Add);
+        Assert.Empty(result);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void ParseExtraSearchDirs_returns_empty_for_whitespace_raw()
+    {
+        List<string> warnings = new List<string>();
+        IReadOnlyList<string> result = IlSpyExternalSourcesProviderHelpers.ParseExtraSearchDirs("   ", warnings.Add);
+        Assert.Empty(result);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void ParseExtraSearchDirs_accepts_single_existing_directory()
+    {
+        string tempDir = Path.GetTempPath();
+        List<string> warnings = new List<string>();
+        IReadOnlyList<string> result = IlSpyExternalSourcesProviderHelpers.ParseExtraSearchDirs(tempDir, warnings.Add);
+        Assert.Single(result);
+        Assert.Equal(Path.GetFullPath(tempDir), result[0]);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void ParseExtraSearchDirs_splits_on_platform_path_separator()
+    {
+        // Both halves point at directories that exist (Path.GetTempPath() and
+        // its parent both resolve on every platform). Joining with
+        // Path.PathSeparator pins the contract: the splitter follows the
+        // platform's PATH convention rather than hard-coding one char.
+        string tempDir = Path.GetFullPath(Path.GetTempPath());
+        string parentDir = Path.GetFullPath(Path.Combine(tempDir, ".."));
+        string raw = tempDir + Path.PathSeparator + parentDir;
+
+        List<string> warnings = new List<string>();
+        IReadOnlyList<string> result = IlSpyExternalSourcesProviderHelpers.ParseExtraSearchDirs(raw, warnings.Add);
+        Assert.Equal(2, result.Count);
+        Assert.Equal(tempDir, result[0]);
+        Assert.Equal(parentDir, result[1]);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void ParseExtraSearchDirs_warns_once_per_rejected_entry()
+    {
+        // One valid + one rejected (relative path) entry — the valid one
+        // makes it through, the rejected one fires exactly one warn.
+        string tempDir = Path.GetFullPath(Path.GetTempPath());
+        string raw = tempDir + Path.PathSeparator + "relative/path/segment";
+
+        List<string> warnings = new List<string>();
+        IReadOnlyList<string> result = IlSpyExternalSourcesProviderHelpers.ParseExtraSearchDirs(raw, warnings.Add);
+        Assert.Single(result);
+        Assert.Equal(tempDir, result[0]);
+        Assert.Single(warnings);
+        Assert.Contains("non-absolute", warnings[0]);
+    }
+
+    [Fact]
+    public void ParseExtraSearchDirs_drops_empty_segments_silently()
+    {
+        // Trailing/leading/duplicate separators emit empty segments that
+        // RemoveEmptyEntries discards — no rejection, no warning.
+        string tempDir = Path.GetFullPath(Path.GetTempPath());
+        string raw = Path.PathSeparator + tempDir + Path.PathSeparator + Path.PathSeparator;
+
+        List<string> warnings = new List<string>();
+        IReadOnlyList<string> result = IlSpyExternalSourcesProviderHelpers.ParseExtraSearchDirs(raw, warnings.Add);
+        Assert.Single(result);
+        Assert.Equal(tempDir, result[0]);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void ParseExtraSearchDirs_preserves_duplicate_entries()
+    {
+        // Pinning current behaviour: the helper does NOT de-duplicate
+        // canonical paths. If a user lists the same dir twice, both copies
+        // flow through to the consumer (which is fine — the resolver loop
+        // just probes the same dir twice). De-dup is a future concern;
+        // changing it should change this test deliberately.
+        string tempDir = Path.GetFullPath(Path.GetTempPath());
+        string raw = tempDir + Path.PathSeparator + tempDir;
+
+        List<string> warnings = new List<string>();
+        IReadOnlyList<string> result = IlSpyExternalSourcesProviderHelpers.ParseExtraSearchDirs(raw, warnings.Add);
+        Assert.Equal(2, result.Count);
+        Assert.Equal(tempDir, result[0]);
+        Assert.Equal(tempDir, result[1]);
+        Assert.Empty(warnings);
+    }
+
     [Fact]
     public void TryParseDecompileEntryFields_round_trips_BuildCacheProperties()
     {

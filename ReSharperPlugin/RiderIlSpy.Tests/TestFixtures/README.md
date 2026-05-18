@@ -9,6 +9,7 @@ depending on production assemblies at test time.
 |------|---------------|---------|
 | `literals.dll` | `Source/Literals.cs` | String literal search |
 | `attributes.dll` | `Source/Attributes.cs` | Attribute / [Obsolete] search |
+| `constants.dll` | `Source/Constants.cs` | `Constant` metadata table — one row per `ConstantTypeCode` branch (Int32 / Int64 / Boolean / String / Char / Double / Single) consumed by `ConstantQueryHandler.DecodeConstant` |
 | `resources.dll` | `Source/Resources.cs` + `embedded.txt` | Embedded resource search |
 | `embedded.txt` | (input) | Plain-text resource embedded into `resources.dll` via `-resource:` |
 | `fieldcount_bug_net10.dll` | `Source/FieldCountBug.cs` | .NET 10 TFM (2-part version) — triggers upstream ICSharpCode `Version.ToString(3)` bug in `DecompilerTypeSystem.InitializeAsync`. Used by `IlSpyNavResolverTests.Falls_Back_To_IL_For_Decompiler_FieldCount_Bug` to assert the IL-disassembly fallback path. |
@@ -29,6 +30,7 @@ file-scoped namespaces even with `-langversion:latest`.
 cd ReSharperPlugin/RiderIlSpy.Tests/TestFixtures
 csc -target:library -out:literals.dll Source/Literals.cs
 csc -target:library -out:attributes.dll Source/Attributes.cs
+csc -target:library -out:constants.dll Source/Constants.cs
 csc -target:library -out:resources.dll -resource:embedded.txt Source/Resources.cs
 ```
 

@@ -224,6 +224,8 @@ public class IlSpyDecompilerSmokeTests
             DecompilerSettings settings = new DecompilerSettings();
             DecompileAssemblyToProjectResult result = decompiler.DecompileAssemblyToProject(TestAssemblyPath, tempRoot, settings);
 
+            Assert.True(result.Success, $"expected Success; FailureReason was: {result.FailureReason}");
+            Assert.Null(result.FailureReason);
             Assert.Equal(tempRoot, result.OutputDirectory);
             Assert.NotNull(result.ProjectFilePath);
             Assert.True(File.Exists(result.ProjectFilePath!), $"expected .csproj on disk at {result.ProjectFilePath}");
@@ -256,6 +258,33 @@ public class IlSpyDecompilerSmokeTests
             DecompileAssemblyToProjectResult result = decompiler.DecompileAssemblyToProject(TestAssemblyPath, tempRoot, settings);
             Assert.True(Directory.Exists(tempRoot), "expected helper to create the target directory");
             Assert.True(result.CSharpFileCount > 0);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+                Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    // Pins the failure shape: passing a nonexistent assembly path should yield
+    // a Fail result (NOT an unhandled exception), with FailureReason populated
+    // and the output directory still surfaced so the caller can clean up. The
+    // sibling Decompile* methods (DecompileType, DecompileAssemblyInfo) wrap
+    // in try/catch and return Fail; DecompileAssemblyToProject must match.
+    [Fact]
+    public void DecompileAssemblyToProject_returns_fail_on_missing_assembly()
+    {
+        IlSpyDecompiler decompiler = new IlSpyDecompiler();
+        string bogusAssembly = Path.Combine(Path.GetTempPath(), "nonexistent_" + Path.GetRandomFileName() + ".dll");
+        string tempRoot = Path.Combine(Path.GetTempPath(), "RiderIlSpy_ProjectExport_Fail_" + Path.GetRandomFileName());
+        try
+        {
+            DecompilerSettings settings = new DecompilerSettings();
+            DecompileAssemblyToProjectResult result = decompiler.DecompileAssemblyToProject(bogusAssembly, tempRoot, settings);
+            Assert.False(result.Success, "expected Fail for nonexistent assembly path");
+            Assert.NotNull(result.FailureReason);
+            Assert.NotEmpty(result.FailureReason!);
+            Assert.Equal(tempRoot, result.OutputDirectory);
         }
         finally
         {
