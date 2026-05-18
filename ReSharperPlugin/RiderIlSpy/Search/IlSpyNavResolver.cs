@@ -105,7 +105,7 @@ public sealed class IlSpyNavResolver
 
         ITypeDefinition? typeDef = decompiler.TypeSystem.MainModule.GetDefinition(typeHandle);
         if (typeDef == null)
-            return IlSpyNavResolution.Failure("type definition not found in type system");
+            return IlSpyNavResolution.Failure(RiderIlSpy.Resources.Strings.NavResolver_TypeDefinitionNotFound);
 
         SyntaxTree tree = decompiler.DecompileType(typeDef.FullTypeName);
         string body = SyntaxTreeToString(tree, settings);

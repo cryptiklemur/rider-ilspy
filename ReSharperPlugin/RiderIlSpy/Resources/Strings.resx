@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RiderIlSpy user-facing strings (C# / ReSharper side).
+  Locale overlays live in Strings.<lang>.resx (none yet — translatable infra only).
+  Looked up at runtime via RiderIlSpy.Resources.Strings — see Strings.cs.
+
+  Banner comment prefixes (e.g. "// Decompiled with RiderIlSpy", "// Type: ")
+  intentionally stay in English. Those lines are embedded inside the decompiled
+  C# source that the user views in a code editor; localizing them would make
+  the resulting source mixed-language and harder to scan.
+
+  [SettingsEntry(default, "description")] descriptions on IlSpySettings members
+  intentionally stay in English in the source: the second arg of [SettingsEntry]
+  must be a compile-time const, which excludes resource-manager lookups. To
+  localize those, ReSharper's settings rendering pipeline would need a custom
+  resolver — out of scope for the English-baseline infra pass. The
+  IlSpySettings_* keys below are provided so a future custom resolver can
+  pick them up without re-keying.
+-->
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <data name="OptionsPage_DisplayName" xml:space="preserve">
+    <value>ILSpy Decompiler</value>
+  </data>
+
+  <data name="OptionsPage_Header_General" xml:space="preserve">
+    <value>General</value>
+  </data>
+  <data name="OptionsPage_Enabled_Label" xml:space="preserve">
+    <value>Use ILSpy as the external decompiler</value>
+  </data>
+  <data name="OptionsPage_ShowDiagnosticBanner_Label" xml:space="preserve">
+    <value>Show diagnostic banner at top of decompiled output</value>
+  </data>
+
+  <data name="OptionsPage_Header_OutputMode" xml:space="preserve">
+    <value>Output mode</value>
+  </data>
+  <data name="OptionsPage_OutputMode_Label" xml:space="preserve">
+    <value>Default view:</value>
+  </data>
+  <data name="OptionsPage_OutputMode_CSharp" xml:space="preserve">
+    <value>C# (decompiled)</value>
+  </data>
+  <data name="OptionsPage_OutputMode_IL" xml:space="preserve">
+    <value>IL (disassembled)</value>
+  </data>
+  <data name="OptionsPage_OutputMode_CSharpWithIL" xml:space="preserve">
+    <value>C# with IL</value>
+  </data>
+
+  <data name="OptionsPage_Header_RuntimeAssemblyLookup" xml:space="preserve">
+    <value>Runtime assembly lookup</value>
+  </data>
+  <data name="OptionsPage_AssemblyResolveDirs_Comment" xml:space="preserve">
+    <value>Extra directories ILSpy will search when an assembly cant be resolved (e.g. RimWorld_Data/Managed). Separate with ';' or ':'.</value>
+  </data>
+  <data name="OptionsPage_AssemblyResolveDirs_Label" xml:space="preserve">
+    <value>Extra search directories:</value>
+  </data>
+
+  <data name="OptionsPage_Header_DecompilerOutput" xml:space="preserve">
+    <value>Decompiler output</value>
+  </data>
+  <data name="OptionsPage_AsyncAwait_Label" xml:space="preserve">
+    <value>Reconstruct async/await</value>
+  </data>
+  <data name="OptionsPage_ExpressionBodies_Label" xml:space="preserve">
+    <value>Use expression-bodied members for calculated getter-only properties</value>
+  </data>
+  <data name="OptionsPage_NamedArguments_Label" xml:space="preserve">
+    <value>Use named arguments where helpful</value>
+  </data>
+  <data name="OptionsPage_ShowXmlDocumentation_Label" xml:space="preserve">
+    <value>Show XML documentation comments</value>
+  </data>
+  <data name="OptionsPage_RemoveDeadCode_Label" xml:space="preserve">
+    <value>Remove dead code</value>
+  </data>
+  <data name="OptionsPage_ThrowOnAssemblyResolveErrors_Label" xml:space="preserve">
+    <value>Throw on assembly resolve errors (instead of best-effort output)</value>
+  </data>
+  <data name="OptionsPage_UsePrimaryConstructorSyntax_Label" xml:space="preserve">
+    <value>Use primary constructor syntax with records (disable for go-to-definition correctness)</value>
+  </data>
+
+  <data name="OptionsPage_LanguageVersion_Label" xml:space="preserve">
+    <value>Target C# language version:</value>
+  </data>
+  <data name="OptionsPage_LanguageVersion_Latest" xml:space="preserve">
+    <value>Latest (default)</value>
+  </data>
+  <data name="OptionsPage_LanguageVersion_CSharp11_0" xml:space="preserve">
+    <value>C# 11.0</value>
+  </data>
+  <data name="OptionsPage_LanguageVersion_CSharp10_0" xml:space="preserve">
+    <value>C# 10.0</value>
+  </data>
+  <data name="OptionsPage_LanguageVersion_CSharp9_0" xml:space="preserve">
+    <value>C# 9.0</value>
+  </data>
+  <data name="OptionsPage_LanguageVersion_CSharp8_0" xml:space="preserve">
+    <value>C# 8.0</value>
+  </data>
+  <data name="OptionsPage_LanguageVersion_CSharp7_3" xml:space="preserve">
+    <value>C# 7.3</value>
+  </data>
+
+  <data name="OptionsPage_Header_SourceLink" xml:space="preserve">
+    <value>SourceLink</value>
+  </data>
+  <data name="OptionsPage_SourceLink_Comment" xml:space="preserve">
+    <value>When an assembly's PDB declares SourceLink (e.g. .NET BCL, most modern NuGet packages), fetch the published original source instead of decompiling.</value>
+  </data>
+  <data name="OptionsPage_PreferSourceLink_Label" xml:space="preserve">
+    <value>Prefer original source via SourceLink when available</value>
+  </data>
+  <data name="OptionsPage_SourceLinkTimeoutSeconds_Label" xml:space="preserve">
+    <value>Fetch timeout (seconds):</value>
+  </data>
+
+  <data name="NavResolver_TypeDefinitionNotFound" xml:space="preserve">
+    <value>type definition not found in type system</value>
+  </data>
+
+  <data name="Search_IndexNotReady" xml:space="preserve">
+    <value>Index not ready</value>
+  </data>
+  <data name="Search_InvalidTokenFormat" xml:space="preserve">
+    <value>Invalid token format — use #XXXXXXXX or 0xXXXXXXXX</value>
+  </data>
+  <data name="Search_UnknownQueryType" xml:space="preserve">
+    <value>Unknown queryType: {0}</value>
+  </data>
+
+  <data name="IlSpySettings_Enabled" xml:space="preserve">
+    <value>Enable ILSpy as the external decompiler</value>
+  </data>
+  <data name="IlSpySettings_OutputMode" xml:space="preserve">
+    <value>Default output mode</value>
+  </data>
+  <data name="IlSpySettings_ShowDiagnosticBanner" xml:space="preserve">
+    <value>Show diagnostic banner at the top of decompiled output</value>
+  </data>
+  <data name="IlSpySettings_AssemblyResolveDirs" xml:space="preserve">
+    <value>Extra directories to search for runtime assemblies, separated by ';' (Linux/macOS) or ':' (any)</value>
+  </data>
+  <data name="IlSpySettings_AsyncAwait" xml:space="preserve">
+    <value>Use async/await syntax</value>
+  </data>
+  <data name="IlSpySettings_ExpressionBodies" xml:space="preserve">
+    <value>Use expression-bodied members</value>
+  </data>
+  <data name="IlSpySettings_NamedArguments" xml:space="preserve">
+    <value>Use named arguments</value>
+  </data>
+  <data name="IlSpySettings_ShowXmlDocumentation" xml:space="preserve">
+    <value>Show XML documentation comments</value>
+  </data>
+  <data name="IlSpySettings_RemoveDeadCode" xml:space="preserve">
+    <value>Remove dead code</value>
+  </data>
+  <data name="IlSpySettings_ThrowOnAssemblyResolveErrors" xml:space="preserve">
+    <value>Throw on assembly resolve errors instead of producing best-effort output</value>
+  </data>
+  <data name="IlSpySettings_UsePrimaryConstructorSyntax" xml:space="preserve">
+    <value>Use primary constructor syntax with records (disable for go-to-definition correctness)</value>
+  </data>
+  <data name="IlSpySettings_LanguageVersion" xml:space="preserve">
+    <value>Target C# language version for decompiled output</value>
+  </data>
+  <data name="IlSpySettings_PreferSourceLink" xml:space="preserve">
+    <value>Prefer original source via SourceLink when available</value>
+  </data>
+  <data name="IlSpySettings_SourceLinkTimeoutSeconds" xml:space="preserve">
+    <value>SourceLink fetch timeout (seconds)</value>
+  </data>
+  <data name="IlSpySettings_Key_DisplayName" xml:space="preserve">
+    <value>ILSpy decompiler settings</value>
+  </data>
+</root>

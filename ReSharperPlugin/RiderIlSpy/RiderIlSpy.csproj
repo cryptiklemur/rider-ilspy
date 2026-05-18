@@ -24,6 +24,21 @@
     <InternalsVisibleTo Include="RiderIlSpy.Tests" />
   </ItemGroup>
 
+  <!--
+    Strings.resx embeds with the LogicalName matching the namespace + filename
+    that ResourceManager (in Strings.cs) opens by:
+        new ResourceManager("RiderIlSpy.Resources.Strings", typeof(Strings).Assembly)
+    Without the explicit LogicalName MSBuild derives the manifest name from the
+    relative path with '.' separators, which gives the same result here, but
+    pinning it makes a path rename a single-file change instead of a silent
+    runtime "resource not found" failure.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Update="Resources\Strings.resx">
+      <LogicalName>RiderIlSpy.Resources.Strings.resources</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="JetBrains.Rider.SDK" Version="2026.1.1" PrivateAssets="all" />
     <!--

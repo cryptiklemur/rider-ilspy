@@ -118,7 +118,7 @@ public sealed class IlSpySearchService
         ourLogger.Info($"ilspy-search: request type={request.QueryType} input='{request.Input}' indexReady={myIndex != null}");
         if (myIndex == null)
         {
-            EmitErrorBatch(request.SearchId, "Index not ready");
+            EmitErrorBatch(request.SearchId, RiderIlSpy.Resources.Strings.Search_IndexNotReady);
             return request.SearchId;
         }
 
@@ -155,7 +155,7 @@ public sealed class IlSpySearchService
             case "Token": EmitTokenResults(request, ct); break;
             case "Constant": EmitConstantResults(request, ct); break;
             case "Resource": EmitResourceResults(request, ct); break;
-            default: EmitErrorBatch(request.SearchId, $"Unknown queryType: {request.QueryType}"); break;
+            default: EmitErrorBatch(request.SearchId, RiderIlSpy.Resources.Strings.Search_UnknownQueryType(request.QueryType)); break;
         }
     }
 
@@ -178,7 +178,7 @@ public sealed class IlSpySearchService
     {
         if (!TokenQueryHandler.TryParse(req.Input, out int token, out string? _))
         {
-            EmitErrorBatch(req.SearchId, "Invalid token format — use #XXXXXXXX or 0xXXXXXXXX");
+            EmitErrorBatch(req.SearchId, RiderIlSpy.Resources.Strings.Search_InvalidTokenFormat);
             return;
         }
 

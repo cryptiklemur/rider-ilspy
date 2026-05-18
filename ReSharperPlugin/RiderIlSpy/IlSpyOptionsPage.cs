@@ -2,9 +2,14 @@ using JetBrains.Application.UI.Options;
 using JetBrains.Application.UI.Options.OptionsDialog;
 using JetBrains.IDE.UI.Options;
 using JetBrains.Lifetimes;
+using RiderIlSpy.Resources;
 
 namespace RiderIlSpy;
 
+// The [OptionsPage] display-name argument must be a compile-time const, so the
+// English literal stays inline here; the matching localized string lives at
+// Strings.OptionsPage_DisplayName for any future custom-renderer path. Keep
+// the two in sync if either side changes.
 [OptionsPage(Pid, "ILSpy Decompiler", null)]
 public class IlSpyOptionsPage : BeSimpleOptionsPage
 {
@@ -16,46 +21,46 @@ public class IlSpyOptionsPage : BeSimpleOptionsPage
     public IlSpyOptionsPage(Lifetime lifetime, OptionsPageContext optionsPageContext, OptionsSettingsSmartContext optionsSettingsSmartContext)
         : base(lifetime, optionsPageContext, optionsSettingsSmartContext)
     {
-        AddHeader("General");
-        AddBoolOption((IlSpySettings s) => s.Enabled, "Use ILSpy as the external decompiler", null);
-        AddBoolOption((IlSpySettings s) => s.ShowDiagnosticBanner, "Show diagnostic banner at top of decompiled output", null);
+        AddHeader(Strings.OptionsPage_Header_General);
+        AddBoolOption((IlSpySettings s) => s.Enabled, Strings.OptionsPage_Enabled_Label, null);
+        AddBoolOption((IlSpySettings s) => s.ShowDiagnosticBanner, Strings.OptionsPage_ShowDiagnosticBanner_Label, null);
 
-        AddHeader("Output mode");
-        AddComboEnum((IlSpySettings s) => s.OutputMode, "Default view:", mode => mode switch
+        AddHeader(Strings.OptionsPage_Header_OutputMode);
+        AddComboEnum((IlSpySettings s) => s.OutputMode, Strings.OptionsPage_OutputMode_Label, mode => mode switch
         {
-            IlSpyOutputMode.CSharp => "C# (decompiled)",
-            IlSpyOutputMode.IL => "IL (disassembled)",
-            IlSpyOutputMode.CSharpWithIL => "C# with IL",
+            IlSpyOutputMode.CSharp => Strings.OptionsPage_OutputMode_CSharp,
+            IlSpyOutputMode.IL => Strings.OptionsPage_OutputMode_IL,
+            IlSpyOutputMode.CSharpWithIL => Strings.OptionsPage_OutputMode_CSharpWithIL,
             _ => mode.ToString(),
         });
 
-        AddHeader("Runtime assembly lookup");
-        AddCommentText("Extra directories ILSpy will search when an assembly cant be resolved (e.g. RimWorld_Data/Managed). Separate with ';' or ':'.");
-        AddStringOption((IlSpySettings s) => s.AssemblyResolveDirs, "Extra search directories:", null, false);
+        AddHeader(Strings.OptionsPage_Header_RuntimeAssemblyLookup);
+        AddCommentText(Strings.OptionsPage_AssemblyResolveDirs_Comment);
+        AddStringOption((IlSpySettings s) => s.AssemblyResolveDirs, Strings.OptionsPage_AssemblyResolveDirs_Label, null, false);
 
-        AddHeader("Decompiler output");
-        AddBoolOption((IlSpySettings s) => s.AsyncAwait, "Reconstruct async/await", null);
-        AddBoolOption((IlSpySettings s) => s.ExpressionBodies, "Use expression-bodied members for calculated getter-only properties", null);
-        AddBoolOption((IlSpySettings s) => s.NamedArguments, "Use named arguments where helpful", null);
-        AddBoolOption((IlSpySettings s) => s.ShowXmlDocumentation, "Show XML documentation comments", null);
-        AddBoolOption((IlSpySettings s) => s.RemoveDeadCode, "Remove dead code", null);
-        AddBoolOption((IlSpySettings s) => s.ThrowOnAssemblyResolveErrors, "Throw on assembly resolve errors (instead of best-effort output)", null);
-        AddBoolOption((IlSpySettings s) => s.UsePrimaryConstructorSyntax, "Use primary constructor syntax with records (disable for go-to-definition correctness)", null);
+        AddHeader(Strings.OptionsPage_Header_DecompilerOutput);
+        AddBoolOption((IlSpySettings s) => s.AsyncAwait, Strings.OptionsPage_AsyncAwait_Label, null);
+        AddBoolOption((IlSpySettings s) => s.ExpressionBodies, Strings.OptionsPage_ExpressionBodies_Label, null);
+        AddBoolOption((IlSpySettings s) => s.NamedArguments, Strings.OptionsPage_NamedArguments_Label, null);
+        AddBoolOption((IlSpySettings s) => s.ShowXmlDocumentation, Strings.OptionsPage_ShowXmlDocumentation_Label, null);
+        AddBoolOption((IlSpySettings s) => s.RemoveDeadCode, Strings.OptionsPage_RemoveDeadCode_Label, null);
+        AddBoolOption((IlSpySettings s) => s.ThrowOnAssemblyResolveErrors, Strings.OptionsPage_ThrowOnAssemblyResolveErrors_Label, null);
+        AddBoolOption((IlSpySettings s) => s.UsePrimaryConstructorSyntax, Strings.OptionsPage_UsePrimaryConstructorSyntax_Label, null);
 
-        AddComboEnum((IlSpySettings s) => s.LanguageVersion, "Target C# language version:", v => v switch
+        AddComboEnum((IlSpySettings s) => s.LanguageVersion, Strings.OptionsPage_LanguageVersion_Label, v => v switch
         {
-            IlSpyLanguageVersion.Latest => "Latest (default)",
-            IlSpyLanguageVersion.CSharp11_0 => "C# 11.0",
-            IlSpyLanguageVersion.CSharp10_0 => "C# 10.0",
-            IlSpyLanguageVersion.CSharp9_0 => "C# 9.0",
-            IlSpyLanguageVersion.CSharp8_0 => "C# 8.0",
-            IlSpyLanguageVersion.CSharp7_3 => "C# 7.3",
+            IlSpyLanguageVersion.Latest => Strings.OptionsPage_LanguageVersion_Latest,
+            IlSpyLanguageVersion.CSharp11_0 => Strings.OptionsPage_LanguageVersion_CSharp11_0,
+            IlSpyLanguageVersion.CSharp10_0 => Strings.OptionsPage_LanguageVersion_CSharp10_0,
+            IlSpyLanguageVersion.CSharp9_0 => Strings.OptionsPage_LanguageVersion_CSharp9_0,
+            IlSpyLanguageVersion.CSharp8_0 => Strings.OptionsPage_LanguageVersion_CSharp8_0,
+            IlSpyLanguageVersion.CSharp7_3 => Strings.OptionsPage_LanguageVersion_CSharp7_3,
             _ => v.ToString(),
         });
 
-        AddHeader("SourceLink");
-        AddCommentText("When an assembly's PDB declares SourceLink (e.g. .NET BCL, most modern NuGet packages), fetch the published original source instead of decompiling.");
-        AddBoolOption((IlSpySettings s) => s.PreferSourceLink, "Prefer original source via SourceLink when available", null);
-        AddIntOption((IlSpySettings s) => s.SourceLinkTimeoutSeconds, "Fetch timeout (seconds):");
+        AddHeader(Strings.OptionsPage_Header_SourceLink);
+        AddCommentText(Strings.OptionsPage_SourceLink_Comment);
+        AddBoolOption((IlSpySettings s) => s.PreferSourceLink, Strings.OptionsPage_PreferSourceLink_Label, null);
+        AddIntOption((IlSpySettings s) => s.SourceLinkTimeoutSeconds, Strings.OptionsPage_SourceLinkTimeoutSeconds_Label);
     }
 }
