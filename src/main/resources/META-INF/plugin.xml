@@ -16,8 +16,16 @@
         <applicationConfigurable instance="com.cryptiklemur.riderilspy.IlSpyOptionsPage"
                                  id="RiderIlSpyOptionsPage"
                                  displayName="ILSpy Decompiler"/>
+        <applicationConfigurable instance="com.cryptiklemur.riderilspy.IlSpySearchConfigurable"
+                                 id="RiderIlSpySearchConfigurable"
+                                 parentId="RiderIlSpyOptionsPage"
+                                 displayName="Search"/>
         <applicationService serviceImplementation="com.cryptiklemur.riderilspy.internals.IlSpyFrontendSettings"/>
         <projectService serviceImplementation="com.cryptiklemur.riderilspy.IlSpyProtocolHost"/>
+        <projectService serviceImplementation="com.cryptiklemur.riderilspy.search.IlSpySearchClientService"/>
+        <projectService serviceImplementation="com.cryptiklemur.riderilspy.search.IlSpyNavTargetResolverService"/>
+        <projectService serviceInterface="com.cryptiklemur.riderilspy.search.IlSpyExternalNavigationGateway"
+                        serviceImplementation="com.cryptiklemur.riderilspy.search.IlSpyExternalNavigationGatewayImpl"/>
         <statusBarWidgetFactory id="RiderIlSpy.ModeStatusBarWidget"
                                 implementation="com.cryptiklemur.riderilspy.IlSpyModeStatusBarWidgetFactory"
                                 order="last"/>
@@ -25,6 +33,12 @@
              messages. Balloon (not toolwindow) so success/failure surfaces
              outside whichever tool window is focused. -->
         <notificationGroup id="RiderIlSpy" displayType="BALLOON"/>
+        <searchEverywhereContributor implementation="com.cryptiklemur.riderilspy.search.IlSpySearchEverywhereContributor$Factory"/>
+        <!-- ILSpy Search tool window — search across all indexed assemblies. -->
+        <toolWindow id="ILSpySearch"
+                    anchor="right"
+                    secondary="true"
+                    factoryClass="com.cryptiklemur.riderilspy.search.IlSpySearchToolWindow"/>
     </extensions>
 
     <actions>
@@ -41,6 +55,13 @@
                 description="Decompile this managed .dll or .exe to a buildable C# project tree using ILSpy.">
             <add-to-group group-id="SolutionExplorerPopupMenuForReference" anchor="last"/>
             <add-to-group group-id="AssemblyExplorerPopupMenu" anchor="last"/>
+        </action>
+        <!-- Tools menu entry; also reachable via Find Action. -->
+        <action id="ILSpy.RescanAll"
+                class="com.cryptiklemur.riderilspy.search.IlSpyRescanAllAction"
+                text="Rescan ILSpy Search Index"
+                description="Rebuild the ILSpy search index for the open solution">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
     </actions>
 </idea-plugin>

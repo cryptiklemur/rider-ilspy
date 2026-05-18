@@ -2,6 +2,7 @@ package com.cryptiklemur.riderilspy
 
 import com.cryptiklemur.riderilspy.model.RiderIlSpyModel
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import kotlin.reflect.full.memberProperties
 
@@ -101,5 +102,25 @@ class RiderIlSpyModelContractTest {
         assert("projectFilePath" in fields) { "SaveAsProjectResponse.projectFilePath field missing — fields=$fields" }
         assert("csharpFileCount" in fields) { "SaveAsProjectResponse.csharpFileCount field missing — fields=$fields" }
         assert("errorMessage" in fields) { "SaveAsProjectResponse.errorMessage field missing — fields=$fields" }
+    }
+
+    @Test
+    fun `model exposes searchIndexState property`() {
+        val members = RiderIlSpyModel::class.java.declaredMethods.map { it.name }
+        assertTrue(members.any { it == "getSearchIndexState" }, "missing searchIndexState accessor")
+    }
+
+    @Test
+    fun `model exposes runSearch call and searchResultBatch signal`() {
+        val methods = RiderIlSpyModel::class.java.declaredMethods.map { it.name }
+        assertTrue(methods.any { it == "getRunSearch" }, "missing runSearch accessor")
+        assertTrue(methods.any { it == "getSearchResultBatch" }, "missing searchResultBatch accessor")
+    }
+
+    @Test
+    fun `model exposes cancelSearch and rescanAssembly signals`() {
+        val methods = RiderIlSpyModel::class.java.declaredMethods.map { it.name }
+        assertTrue(methods.any { it == "getCancelSearch" })
+        assertTrue(methods.any { it == "getRescanAssembly" })
     }
 }

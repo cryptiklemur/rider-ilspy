@@ -6,6 +6,7 @@ import com.jetbrains.rd.generator.nova.PredefinedType.int
 import com.jetbrains.rd.generator.nova.PredefinedType.long
 import com.jetbrains.rd.generator.nova.PredefinedType.string
 import com.jetbrains.rd.generator.nova.call
+import com.jetbrains.rd.generator.nova.immutableList
 import com.jetbrains.rd.generator.nova.csharp.CSharp50Generator
 import com.jetbrains.rd.generator.nova.field
 import com.jetbrains.rd.generator.nova.kotlin.Kotlin11Generator
@@ -58,6 +59,68 @@ object RiderIlSpyModel : Ext(SolutionModel.Solution) {
         property("mode", string)
         signal("readyTick", long)
         call("saveAsProject", saveAsProjectRequest, saveAsProjectResponse)
+
+        val searchIndexState = structdef("SearchIndexState") {
+            field("phase", string)         // "Idle" / "Building" / "Ready" / "Failed"
+            field("indexedCount", int)
+            field("totalCount", int)
+            field("skippedCount", int)
+            field("errorMessage", string)  // empty unless phase == "Failed"
+        }
+
+        property("searchIndexState", searchIndexState)
+
+        val searchRequest = structdef("SearchRequest") {
+            field("searchId", string)
+            field("queryType", string)          // "Literal" / "Attribute" / "Token" / "Constant" / "Resource"
+            field("input", string)
+            field("assemblyFilter", immutableList(string))
+            field("regex", bool)
+            field("caseSensitive", bool)
+            field("wholeWord", bool)
+            field("maxResults", int)
+        }
+
+        val navTarget = structdef("NavTarget") {
+            field("kind", string)               // "Code" / "Resource"
+            field("assemblyPath", string)
+            field("metadataToken", int)         // method/member token for code, manifest handle for resource
+            field("ilOffset", int)              // -1 if N/A
+            field("resourceEntry", string)      // empty if not a nested .resources entry
+            field("mimeHint", string)
+        }
+
+        val searchRow = structdef("SearchResultRow") {
+            field("assemblyName", string)
+            field("target", string)             // human-readable; FQN, resource name, etc.
+            field("snippet", string)
+            field("matchStart", int)
+            field("matchLength", int)
+            field("navTarget", navTarget)
+        }
+
+        val searchResultBatch = structdef("SearchResultBatch") {
+            field("searchId", string)
+            field("rows", immutableList(searchRow))
+            field("isComplete", bool)
+            field("errorMessage", string)
+        }
+
+        call("runSearch", searchRequest, string)   // returns the same searchId so frontend can correlate
+        signal("searchResultBatch", searchResultBatch)
+
+        signal("cancelSearch", string)        // payload = searchId
+        signal("rescanAssembly", string)      // payload = assembly path
+
+        val navResolution = structdef("NavResolution") {
+            field("success", bool)
+            field("filePath", string)         // absolute path to decompiled .cs file on disk (empty on failure)
+            field("line", int)                // 1-based line in filePath; 1 if unknown
+            field("column", int)              // 1-based column; 1 if unknown
+            field("errorMessage", string)     // empty unless success == false
+        }
+
+        call("resolveNavTarget", navTarget, navResolution)
 
         setting(Kotlin11Generator.Namespace, "com.cryptiklemur.riderilspy.model")
         setting(CSharp50Generator.Namespace, "RiderIlSpy.Model")

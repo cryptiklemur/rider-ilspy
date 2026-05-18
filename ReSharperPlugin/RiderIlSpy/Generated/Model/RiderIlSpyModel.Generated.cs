@@ -36,7 +36,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:44</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:45</p>
   /// </summary>
   public class RiderIlSpyModel : RdExtBase
   {
@@ -45,44 +45,87 @@ namespace RiderIlSpy.Model
     [NotNull] public IViewableProperty<string> Mode => _Mode;
     [NotNull] public ISignal<long> ReadyTick => _ReadyTick;
     [NotNull] public IRdEndpoint<SaveAsProjectRequest, SaveAsProjectResponse> SaveAsProject => _SaveAsProject;
+    [NotNull] public IViewableProperty<RiderIlSpy.Model.SearchIndexState> SearchIndexState => _SearchIndexState;
+    [NotNull] public IRdEndpoint<SearchRequest, string> RunSearch => _RunSearch;
+    [NotNull] public ISignal<RiderIlSpy.Model.SearchResultBatch> SearchResultBatch => _SearchResultBatch;
+    [NotNull] public ISignal<string> CancelSearch => _CancelSearch;
+    [NotNull] public ISignal<string> RescanAssembly => _RescanAssembly;
+    [NotNull] public IRdEndpoint<NavTarget, NavResolution> ResolveNavTarget => _ResolveNavTarget;
     
     //private fields
     [NotNull] private readonly RdProperty<string> _Mode;
     [NotNull] private readonly RdSignal<long> _ReadyTick;
     [NotNull] private readonly RdCall<SaveAsProjectRequest, SaveAsProjectResponse> _SaveAsProject;
+    [NotNull] private readonly RdProperty<RiderIlSpy.Model.SearchIndexState> _SearchIndexState;
+    [NotNull] private readonly RdCall<SearchRequest, string> _RunSearch;
+    [NotNull] private readonly RdSignal<RiderIlSpy.Model.SearchResultBatch> _SearchResultBatch;
+    [NotNull] private readonly RdSignal<string> _CancelSearch;
+    [NotNull] private readonly RdSignal<string> _RescanAssembly;
+    [NotNull] private readonly RdCall<NavTarget, NavResolution> _ResolveNavTarget;
     
     //primary constructor
     private RiderIlSpyModel(
       [NotNull] RdProperty<string> mode,
       [NotNull] RdSignal<long> readyTick,
-      [NotNull] RdCall<SaveAsProjectRequest, SaveAsProjectResponse> saveAsProject
+      [NotNull] RdCall<SaveAsProjectRequest, SaveAsProjectResponse> saveAsProject,
+      [NotNull] RdProperty<RiderIlSpy.Model.SearchIndexState> searchIndexState,
+      [NotNull] RdCall<SearchRequest, string> runSearch,
+      [NotNull] RdSignal<RiderIlSpy.Model.SearchResultBatch> searchResultBatch,
+      [NotNull] RdSignal<string> cancelSearch,
+      [NotNull] RdSignal<string> rescanAssembly,
+      [NotNull] RdCall<NavTarget, NavResolution> resolveNavTarget
     )
     {
       if (mode == null) throw new ArgumentNullException("mode");
       if (readyTick == null) throw new ArgumentNullException("readyTick");
       if (saveAsProject == null) throw new ArgumentNullException("saveAsProject");
+      if (searchIndexState == null) throw new ArgumentNullException("searchIndexState");
+      if (runSearch == null) throw new ArgumentNullException("runSearch");
+      if (searchResultBatch == null) throw new ArgumentNullException("searchResultBatch");
+      if (cancelSearch == null) throw new ArgumentNullException("cancelSearch");
+      if (rescanAssembly == null) throw new ArgumentNullException("rescanAssembly");
+      if (resolveNavTarget == null) throw new ArgumentNullException("resolveNavTarget");
       
       _Mode = mode;
       _ReadyTick = readyTick;
       _SaveAsProject = saveAsProject;
+      _SearchIndexState = searchIndexState;
+      _RunSearch = runSearch;
+      _SearchResultBatch = searchResultBatch;
+      _CancelSearch = cancelSearch;
+      _RescanAssembly = rescanAssembly;
+      _ResolveNavTarget = resolveNavTarget;
       _Mode.OptimizeNested = true;
+      _SearchIndexState.OptimizeNested = true;
       BindableChildren.Add(new KeyValuePair<string, object>("mode", _Mode));
       BindableChildren.Add(new KeyValuePair<string, object>("readyTick", _ReadyTick));
       BindableChildren.Add(new KeyValuePair<string, object>("saveAsProject", _SaveAsProject));
+      BindableChildren.Add(new KeyValuePair<string, object>("searchIndexState", _SearchIndexState));
+      BindableChildren.Add(new KeyValuePair<string, object>("runSearch", _RunSearch));
+      BindableChildren.Add(new KeyValuePair<string, object>("searchResultBatch", _SearchResultBatch));
+      BindableChildren.Add(new KeyValuePair<string, object>("cancelSearch", _CancelSearch));
+      BindableChildren.Add(new KeyValuePair<string, object>("rescanAssembly", _RescanAssembly));
+      BindableChildren.Add(new KeyValuePair<string, object>("resolveNavTarget", _ResolveNavTarget));
     }
     //secondary constructor
     internal RiderIlSpyModel (
     ) : this (
       new RdProperty<string>(JetBrains.Rd.Impl.Serializers.ReadString, JetBrains.Rd.Impl.Serializers.WriteString),
       new RdSignal<long>(JetBrains.Rd.Impl.Serializers.ReadLong, JetBrains.Rd.Impl.Serializers.WriteLong),
-      new RdCall<SaveAsProjectRequest, SaveAsProjectResponse>(SaveAsProjectRequest.Read, SaveAsProjectRequest.Write, SaveAsProjectResponse.Read, SaveAsProjectResponse.Write)
+      new RdCall<SaveAsProjectRequest, SaveAsProjectResponse>(SaveAsProjectRequest.Read, SaveAsProjectRequest.Write, SaveAsProjectResponse.Read, SaveAsProjectResponse.Write),
+      new RdProperty<RiderIlSpy.Model.SearchIndexState>(RiderIlSpy.Model.SearchIndexState.Read, RiderIlSpy.Model.SearchIndexState.Write),
+      new RdCall<SearchRequest, string>(SearchRequest.Read, SearchRequest.Write, JetBrains.Rd.Impl.Serializers.ReadString, JetBrains.Rd.Impl.Serializers.WriteString),
+      new RdSignal<RiderIlSpy.Model.SearchResultBatch>(RiderIlSpy.Model.SearchResultBatch.Read, RiderIlSpy.Model.SearchResultBatch.Write),
+      new RdSignal<string>(JetBrains.Rd.Impl.Serializers.ReadString, JetBrains.Rd.Impl.Serializers.WriteString),
+      new RdSignal<string>(JetBrains.Rd.Impl.Serializers.ReadString, JetBrains.Rd.Impl.Serializers.WriteString),
+      new RdCall<NavTarget, NavResolution>(NavTarget.Read, NavTarget.Write, NavResolution.Read, NavResolution.Write)
     ) {}
     //deconstruct trait
     //statics
     
     
     
-    protected override long SerializationHash => 891022274870918931L;
+    protected override long SerializationHash => -6103727641922359333L;
     
     protected override Action<ISerializers> Register => RegisterDeclaredTypesSerializers;
     public static void RegisterDeclaredTypesSerializers(ISerializers serializers)
@@ -106,6 +149,12 @@ namespace RiderIlSpy.Model
         printer.Print("mode = "); _Mode.PrintEx(printer); printer.Println();
         printer.Print("readyTick = "); _ReadyTick.PrintEx(printer); printer.Println();
         printer.Print("saveAsProject = "); _SaveAsProject.PrintEx(printer); printer.Println();
+        printer.Print("searchIndexState = "); _SearchIndexState.PrintEx(printer); printer.Println();
+        printer.Print("runSearch = "); _RunSearch.PrintEx(printer); printer.Println();
+        printer.Print("searchResultBatch = "); _SearchResultBatch.PrintEx(printer); printer.Println();
+        printer.Print("cancelSearch = "); _CancelSearch.PrintEx(printer); printer.Println();
+        printer.Print("rescanAssembly = "); _RescanAssembly.PrintEx(printer); printer.Println();
+        printer.Print("resolveNavTarget = "); _ResolveNavTarget.PrintEx(printer); printer.Println();
       }
       printer.Print(")");
     }
@@ -127,7 +176,253 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:47</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:115</p>
+  /// </summary>
+  public sealed class NavResolution : IPrintable, IEquatable<NavResolution>
+  {
+    //fields
+    //public fields
+    public bool Success {get; private set;}
+    [NotNull] public string FilePath {get; private set;}
+    public int Line {get; private set;}
+    public int Column {get; private set;}
+    [NotNull] public string ErrorMessage {get; private set;}
+    
+    //private fields
+    //primary constructor
+    public NavResolution(
+      bool success,
+      [NotNull] string filePath,
+      int line,
+      int column,
+      [NotNull] string errorMessage
+    )
+    {
+      if (filePath == null) throw new ArgumentNullException("filePath");
+      if (errorMessage == null) throw new ArgumentNullException("errorMessage");
+      
+      Success = success;
+      FilePath = filePath;
+      Line = line;
+      Column = column;
+      ErrorMessage = errorMessage;
+    }
+    //secondary constructor
+    //deconstruct trait
+    public void Deconstruct(out bool success, [NotNull] out string filePath, out int line, out int column, [NotNull] out string errorMessage)
+    {
+      success = Success;
+      filePath = FilePath;
+      line = Line;
+      column = Column;
+      errorMessage = ErrorMessage;
+    }
+    //statics
+    
+    public static CtxReadDelegate<NavResolution> Read = (ctx, reader) => 
+    {
+      var success = reader.ReadBool();
+      var filePath = reader.ReadString();
+      var line = reader.ReadInt();
+      var column = reader.ReadInt();
+      var errorMessage = reader.ReadString();
+      var _result = new NavResolution(success, filePath, line, column, errorMessage);
+      return _result;
+    };
+    
+    public static CtxWriteDelegate<NavResolution> Write = (ctx, writer, value) => 
+    {
+      writer.Write(value.Success);
+      writer.Write(value.FilePath);
+      writer.Write(value.Line);
+      writer.Write(value.Column);
+      writer.Write(value.ErrorMessage);
+    };
+    
+    //constants
+    
+    //custom body
+    //methods
+    //equals trait
+    public override bool Equals(object obj)
+    {
+      if (ReferenceEquals(null, obj)) return false;
+      if (ReferenceEquals(this, obj)) return true;
+      if (obj.GetType() != GetType()) return false;
+      return Equals((NavResolution) obj);
+    }
+    public bool Equals(NavResolution other)
+    {
+      if (ReferenceEquals(null, other)) return false;
+      if (ReferenceEquals(this, other)) return true;
+      return Success == other.Success && FilePath == other.FilePath && Line == other.Line && Column == other.Column && ErrorMessage == other.ErrorMessage;
+    }
+    //hash code trait
+    public override int GetHashCode()
+    {
+      unchecked {
+        var hash = 0;
+        hash = hash * 31 + Success.GetHashCode();
+        hash = hash * 31 + FilePath.GetHashCode();
+        hash = hash * 31 + Line.GetHashCode();
+        hash = hash * 31 + Column.GetHashCode();
+        hash = hash * 31 + ErrorMessage.GetHashCode();
+        return hash;
+      }
+    }
+    //pretty print
+    public void Print(PrettyPrinter printer)
+    {
+      printer.Println("NavResolution (");
+      using (printer.IndentCookie()) {
+        printer.Print("success = "); Success.PrintEx(printer); printer.Println();
+        printer.Print("filePath = "); FilePath.PrintEx(printer); printer.Println();
+        printer.Print("line = "); Line.PrintEx(printer); printer.Println();
+        printer.Print("column = "); Column.PrintEx(printer); printer.Println();
+        printer.Print("errorMessage = "); ErrorMessage.PrintEx(printer); printer.Println();
+      }
+      printer.Print(")");
+    }
+    //toString
+    public override string ToString()
+    {
+      var printer = new SingleLinePrettyPrinter();
+      Print(printer);
+      return printer.ToString();
+    }
+  }
+  
+  
+  /// <summary>
+  /// <p>Generated from: RiderIlSpyModel.kt:84</p>
+  /// </summary>
+  public sealed class NavTarget : IPrintable, IEquatable<NavTarget>
+  {
+    //fields
+    //public fields
+    [NotNull] public string Kind {get; private set;}
+    [NotNull] public string AssemblyPath {get; private set;}
+    public int MetadataToken {get; private set;}
+    public int IlOffset {get; private set;}
+    [NotNull] public string ResourceEntry {get; private set;}
+    [NotNull] public string MimeHint {get; private set;}
+    
+    //private fields
+    //primary constructor
+    public NavTarget(
+      [NotNull] string kind,
+      [NotNull] string assemblyPath,
+      int metadataToken,
+      int ilOffset,
+      [NotNull] string resourceEntry,
+      [NotNull] string mimeHint
+    )
+    {
+      if (kind == null) throw new ArgumentNullException("kind");
+      if (assemblyPath == null) throw new ArgumentNullException("assemblyPath");
+      if (resourceEntry == null) throw new ArgumentNullException("resourceEntry");
+      if (mimeHint == null) throw new ArgumentNullException("mimeHint");
+      
+      Kind = kind;
+      AssemblyPath = assemblyPath;
+      MetadataToken = metadataToken;
+      IlOffset = ilOffset;
+      ResourceEntry = resourceEntry;
+      MimeHint = mimeHint;
+    }
+    //secondary constructor
+    //deconstruct trait
+    public void Deconstruct([NotNull] out string kind, [NotNull] out string assemblyPath, out int metadataToken, out int ilOffset, [NotNull] out string resourceEntry, [NotNull] out string mimeHint)
+    {
+      kind = Kind;
+      assemblyPath = AssemblyPath;
+      metadataToken = MetadataToken;
+      ilOffset = IlOffset;
+      resourceEntry = ResourceEntry;
+      mimeHint = MimeHint;
+    }
+    //statics
+    
+    public static CtxReadDelegate<NavTarget> Read = (ctx, reader) => 
+    {
+      var kind = reader.ReadString();
+      var assemblyPath = reader.ReadString();
+      var metadataToken = reader.ReadInt();
+      var ilOffset = reader.ReadInt();
+      var resourceEntry = reader.ReadString();
+      var mimeHint = reader.ReadString();
+      var _result = new NavTarget(kind, assemblyPath, metadataToken, ilOffset, resourceEntry, mimeHint);
+      return _result;
+    };
+    
+    public static CtxWriteDelegate<NavTarget> Write = (ctx, writer, value) => 
+    {
+      writer.Write(value.Kind);
+      writer.Write(value.AssemblyPath);
+      writer.Write(value.MetadataToken);
+      writer.Write(value.IlOffset);
+      writer.Write(value.ResourceEntry);
+      writer.Write(value.MimeHint);
+    };
+    
+    //constants
+    
+    //custom body
+    //methods
+    //equals trait
+    public override bool Equals(object obj)
+    {
+      if (ReferenceEquals(null, obj)) return false;
+      if (ReferenceEquals(this, obj)) return true;
+      if (obj.GetType() != GetType()) return false;
+      return Equals((NavTarget) obj);
+    }
+    public bool Equals(NavTarget other)
+    {
+      if (ReferenceEquals(null, other)) return false;
+      if (ReferenceEquals(this, other)) return true;
+      return Kind == other.Kind && AssemblyPath == other.AssemblyPath && MetadataToken == other.MetadataToken && IlOffset == other.IlOffset && ResourceEntry == other.ResourceEntry && MimeHint == other.MimeHint;
+    }
+    //hash code trait
+    public override int GetHashCode()
+    {
+      unchecked {
+        var hash = 0;
+        hash = hash * 31 + Kind.GetHashCode();
+        hash = hash * 31 + AssemblyPath.GetHashCode();
+        hash = hash * 31 + MetadataToken.GetHashCode();
+        hash = hash * 31 + IlOffset.GetHashCode();
+        hash = hash * 31 + ResourceEntry.GetHashCode();
+        hash = hash * 31 + MimeHint.GetHashCode();
+        return hash;
+      }
+    }
+    //pretty print
+    public void Print(PrettyPrinter printer)
+    {
+      printer.Println("NavTarget (");
+      using (printer.IndentCookie()) {
+        printer.Print("kind = "); Kind.PrintEx(printer); printer.Println();
+        printer.Print("assemblyPath = "); AssemblyPath.PrintEx(printer); printer.Println();
+        printer.Print("metadataToken = "); MetadataToken.PrintEx(printer); printer.Println();
+        printer.Print("ilOffset = "); IlOffset.PrintEx(printer); printer.Println();
+        printer.Print("resourceEntry = "); ResourceEntry.PrintEx(printer); printer.Println();
+        printer.Print("mimeHint = "); MimeHint.PrintEx(printer); printer.Println();
+      }
+      printer.Print(")");
+    }
+    //toString
+    public override string ToString()
+    {
+      var printer = new SingleLinePrettyPrinter();
+      Print(printer);
+      return printer.ToString();
+    }
+  }
+  
+  
+  /// <summary>
+  /// <p>Generated from: RiderIlSpyModel.kt:48</p>
   /// </summary>
   public sealed class SaveAsProjectRequest : IPrintable, IEquatable<SaveAsProjectRequest>
   {
@@ -221,7 +516,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:51</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:52</p>
   /// </summary>
   public sealed class SaveAsProjectResponse : IPrintable, IEquatable<SaveAsProjectResponse>
   {
@@ -317,6 +612,511 @@ namespace RiderIlSpy.Model
         printer.Print("projectFilePath = "); ProjectFilePath.PrintEx(printer); printer.Println();
         printer.Print("csharpFileCount = "); CsharpFileCount.PrintEx(printer); printer.Println();
         printer.Print("errorMessage = "); ErrorMessage.PrintEx(printer); printer.Println();
+      }
+      printer.Print(")");
+    }
+    //toString
+    public override string ToString()
+    {
+      var printer = new SingleLinePrettyPrinter();
+      Print(printer);
+      return printer.ToString();
+    }
+  }
+  
+  
+  /// <summary>
+  /// <p>Generated from: RiderIlSpyModel.kt:63</p>
+  /// </summary>
+  public sealed class SearchIndexState : IPrintable, IEquatable<SearchIndexState>
+  {
+    //fields
+    //public fields
+    [NotNull] public string Phase {get; private set;}
+    public int IndexedCount {get; private set;}
+    public int TotalCount {get; private set;}
+    public int SkippedCount {get; private set;}
+    [NotNull] public string ErrorMessage {get; private set;}
+    
+    //private fields
+    //primary constructor
+    public SearchIndexState(
+      [NotNull] string phase,
+      int indexedCount,
+      int totalCount,
+      int skippedCount,
+      [NotNull] string errorMessage
+    )
+    {
+      if (phase == null) throw new ArgumentNullException("phase");
+      if (errorMessage == null) throw new ArgumentNullException("errorMessage");
+      
+      Phase = phase;
+      IndexedCount = indexedCount;
+      TotalCount = totalCount;
+      SkippedCount = skippedCount;
+      ErrorMessage = errorMessage;
+    }
+    //secondary constructor
+    //deconstruct trait
+    public void Deconstruct([NotNull] out string phase, out int indexedCount, out int totalCount, out int skippedCount, [NotNull] out string errorMessage)
+    {
+      phase = Phase;
+      indexedCount = IndexedCount;
+      totalCount = TotalCount;
+      skippedCount = SkippedCount;
+      errorMessage = ErrorMessage;
+    }
+    //statics
+    
+    public static CtxReadDelegate<SearchIndexState> Read = (ctx, reader) => 
+    {
+      var phase = reader.ReadString();
+      var indexedCount = reader.ReadInt();
+      var totalCount = reader.ReadInt();
+      var skippedCount = reader.ReadInt();
+      var errorMessage = reader.ReadString();
+      var _result = new SearchIndexState(phase, indexedCount, totalCount, skippedCount, errorMessage);
+      return _result;
+    };
+    
+    public static CtxWriteDelegate<SearchIndexState> Write = (ctx, writer, value) => 
+    {
+      writer.Write(value.Phase);
+      writer.Write(value.IndexedCount);
+      writer.Write(value.TotalCount);
+      writer.Write(value.SkippedCount);
+      writer.Write(value.ErrorMessage);
+    };
+    
+    //constants
+    
+    //custom body
+    //methods
+    //equals trait
+    public override bool Equals(object obj)
+    {
+      if (ReferenceEquals(null, obj)) return false;
+      if (ReferenceEquals(this, obj)) return true;
+      if (obj.GetType() != GetType()) return false;
+      return Equals((SearchIndexState) obj);
+    }
+    public bool Equals(SearchIndexState other)
+    {
+      if (ReferenceEquals(null, other)) return false;
+      if (ReferenceEquals(this, other)) return true;
+      return Phase == other.Phase && IndexedCount == other.IndexedCount && TotalCount == other.TotalCount && SkippedCount == other.SkippedCount && ErrorMessage == other.ErrorMessage;
+    }
+    //hash code trait
+    public override int GetHashCode()
+    {
+      unchecked {
+        var hash = 0;
+        hash = hash * 31 + Phase.GetHashCode();
+        hash = hash * 31 + IndexedCount.GetHashCode();
+        hash = hash * 31 + TotalCount.GetHashCode();
+        hash = hash * 31 + SkippedCount.GetHashCode();
+        hash = hash * 31 + ErrorMessage.GetHashCode();
+        return hash;
+      }
+    }
+    //pretty print
+    public void Print(PrettyPrinter printer)
+    {
+      printer.Println("SearchIndexState (");
+      using (printer.IndentCookie()) {
+        printer.Print("phase = "); Phase.PrintEx(printer); printer.Println();
+        printer.Print("indexedCount = "); IndexedCount.PrintEx(printer); printer.Println();
+        printer.Print("totalCount = "); TotalCount.PrintEx(printer); printer.Println();
+        printer.Print("skippedCount = "); SkippedCount.PrintEx(printer); printer.Println();
+        printer.Print("errorMessage = "); ErrorMessage.PrintEx(printer); printer.Println();
+      }
+      printer.Print(")");
+    }
+    //toString
+    public override string ToString()
+    {
+      var printer = new SingleLinePrettyPrinter();
+      Print(printer);
+      return printer.ToString();
+    }
+  }
+  
+  
+  /// <summary>
+  /// <p>Generated from: RiderIlSpyModel.kt:73</p>
+  /// </summary>
+  public sealed class SearchRequest : IPrintable, IEquatable<SearchRequest>
+  {
+    //fields
+    //public fields
+    [NotNull] public string SearchId {get; private set;}
+    [NotNull] public string QueryType {get; private set;}
+    [NotNull] public string Input {get; private set;}
+    [NotNull] public List<string> AssemblyFilter {get; private set;}
+    public bool Regex {get; private set;}
+    public bool CaseSensitive {get; private set;}
+    public bool WholeWord {get; private set;}
+    public int MaxResults {get; private set;}
+    
+    //private fields
+    //primary constructor
+    public SearchRequest(
+      [NotNull] string searchId,
+      [NotNull] string queryType,
+      [NotNull] string input,
+      [NotNull] List<string> assemblyFilter,
+      bool regex,
+      bool caseSensitive,
+      bool wholeWord,
+      int maxResults
+    )
+    {
+      if (searchId == null) throw new ArgumentNullException("searchId");
+      if (queryType == null) throw new ArgumentNullException("queryType");
+      if (input == null) throw new ArgumentNullException("input");
+      if (assemblyFilter == null) throw new ArgumentNullException("assemblyFilter");
+      
+      SearchId = searchId;
+      QueryType = queryType;
+      Input = input;
+      AssemblyFilter = assemblyFilter;
+      Regex = regex;
+      CaseSensitive = caseSensitive;
+      WholeWord = wholeWord;
+      MaxResults = maxResults;
+    }
+    //secondary constructor
+    //deconstruct trait
+    public void Deconstruct([NotNull] out string searchId, [NotNull] out string queryType, [NotNull] out string input, [NotNull] out List<string> assemblyFilter, out bool regex, out bool caseSensitive, out bool wholeWord, out int maxResults)
+    {
+      searchId = SearchId;
+      queryType = QueryType;
+      input = Input;
+      assemblyFilter = AssemblyFilter;
+      regex = Regex;
+      caseSensitive = CaseSensitive;
+      wholeWord = WholeWord;
+      maxResults = MaxResults;
+    }
+    //statics
+    
+    public static CtxReadDelegate<SearchRequest> Read = (ctx, reader) => 
+    {
+      var searchId = reader.ReadString();
+      var queryType = reader.ReadString();
+      var input = reader.ReadString();
+      var assemblyFilter = ReadStringList(ctx, reader);
+      var regex = reader.ReadBool();
+      var caseSensitive = reader.ReadBool();
+      var wholeWord = reader.ReadBool();
+      var maxResults = reader.ReadInt();
+      var _result = new SearchRequest(searchId, queryType, input, assemblyFilter, regex, caseSensitive, wholeWord, maxResults);
+      return _result;
+    };
+    public static CtxReadDelegate<List<string>> ReadStringList = JetBrains.Rd.Impl.Serializers.ReadString.List();
+    
+    public static CtxWriteDelegate<SearchRequest> Write = (ctx, writer, value) => 
+    {
+      writer.Write(value.SearchId);
+      writer.Write(value.QueryType);
+      writer.Write(value.Input);
+      WriteStringList(ctx, writer, value.AssemblyFilter);
+      writer.Write(value.Regex);
+      writer.Write(value.CaseSensitive);
+      writer.Write(value.WholeWord);
+      writer.Write(value.MaxResults);
+    };
+    public static  CtxWriteDelegate<List<string>> WriteStringList = JetBrains.Rd.Impl.Serializers.WriteString.List();
+    
+    //constants
+    
+    //custom body
+    //methods
+    //equals trait
+    public override bool Equals(object obj)
+    {
+      if (ReferenceEquals(null, obj)) return false;
+      if (ReferenceEquals(this, obj)) return true;
+      if (obj.GetType() != GetType()) return false;
+      return Equals((SearchRequest) obj);
+    }
+    public bool Equals(SearchRequest other)
+    {
+      if (ReferenceEquals(null, other)) return false;
+      if (ReferenceEquals(this, other)) return true;
+      return SearchId == other.SearchId && QueryType == other.QueryType && Input == other.Input && AssemblyFilter.SequenceEqual(other.AssemblyFilter) && Regex == other.Regex && CaseSensitive == other.CaseSensitive && WholeWord == other.WholeWord && MaxResults == other.MaxResults;
+    }
+    //hash code trait
+    public override int GetHashCode()
+    {
+      unchecked {
+        var hash = 0;
+        hash = hash * 31 + SearchId.GetHashCode();
+        hash = hash * 31 + QueryType.GetHashCode();
+        hash = hash * 31 + Input.GetHashCode();
+        hash = hash * 31 + AssemblyFilter.ContentHashCode();
+        hash = hash * 31 + Regex.GetHashCode();
+        hash = hash * 31 + CaseSensitive.GetHashCode();
+        hash = hash * 31 + WholeWord.GetHashCode();
+        hash = hash * 31 + MaxResults.GetHashCode();
+        return hash;
+      }
+    }
+    //pretty print
+    public void Print(PrettyPrinter printer)
+    {
+      printer.Println("SearchRequest (");
+      using (printer.IndentCookie()) {
+        printer.Print("searchId = "); SearchId.PrintEx(printer); printer.Println();
+        printer.Print("queryType = "); QueryType.PrintEx(printer); printer.Println();
+        printer.Print("input = "); Input.PrintEx(printer); printer.Println();
+        printer.Print("assemblyFilter = "); AssemblyFilter.PrintEx(printer); printer.Println();
+        printer.Print("regex = "); Regex.PrintEx(printer); printer.Println();
+        printer.Print("caseSensitive = "); CaseSensitive.PrintEx(printer); printer.Println();
+        printer.Print("wholeWord = "); WholeWord.PrintEx(printer); printer.Println();
+        printer.Print("maxResults = "); MaxResults.PrintEx(printer); printer.Println();
+      }
+      printer.Print(")");
+    }
+    //toString
+    public override string ToString()
+    {
+      var printer = new SingleLinePrettyPrinter();
+      Print(printer);
+      return printer.ToString();
+    }
+  }
+  
+  
+  /// <summary>
+  /// <p>Generated from: RiderIlSpyModel.kt:102</p>
+  /// </summary>
+  public sealed class SearchResultBatch : IPrintable, IEquatable<SearchResultBatch>
+  {
+    //fields
+    //public fields
+    [NotNull] public string SearchId {get; private set;}
+    [NotNull] public List<SearchResultRow> Rows {get; private set;}
+    public bool IsComplete {get; private set;}
+    [NotNull] public string ErrorMessage {get; private set;}
+    
+    //private fields
+    //primary constructor
+    public SearchResultBatch(
+      [NotNull] string searchId,
+      [NotNull] List<SearchResultRow> rows,
+      bool isComplete,
+      [NotNull] string errorMessage
+    )
+    {
+      if (searchId == null) throw new ArgumentNullException("searchId");
+      if (rows == null) throw new ArgumentNullException("rows");
+      if (errorMessage == null) throw new ArgumentNullException("errorMessage");
+      
+      SearchId = searchId;
+      Rows = rows;
+      IsComplete = isComplete;
+      ErrorMessage = errorMessage;
+    }
+    //secondary constructor
+    //deconstruct trait
+    public void Deconstruct([NotNull] out string searchId, [NotNull] out List<SearchResultRow> rows, out bool isComplete, [NotNull] out string errorMessage)
+    {
+      searchId = SearchId;
+      rows = Rows;
+      isComplete = IsComplete;
+      errorMessage = ErrorMessage;
+    }
+    //statics
+    
+    public static CtxReadDelegate<SearchResultBatch> Read = (ctx, reader) => 
+    {
+      var searchId = reader.ReadString();
+      var rows = ReadSearchResultRowList(ctx, reader);
+      var isComplete = reader.ReadBool();
+      var errorMessage = reader.ReadString();
+      var _result = new SearchResultBatch(searchId, rows, isComplete, errorMessage);
+      return _result;
+    };
+    public static CtxReadDelegate<List<SearchResultRow>> ReadSearchResultRowList = SearchResultRow.Read.List();
+    
+    public static CtxWriteDelegate<SearchResultBatch> Write = (ctx, writer, value) => 
+    {
+      writer.Write(value.SearchId);
+      WriteSearchResultRowList(ctx, writer, value.Rows);
+      writer.Write(value.IsComplete);
+      writer.Write(value.ErrorMessage);
+    };
+    public static  CtxWriteDelegate<List<SearchResultRow>> WriteSearchResultRowList = SearchResultRow.Write.List();
+    
+    //constants
+    
+    //custom body
+    //methods
+    //equals trait
+    public override bool Equals(object obj)
+    {
+      if (ReferenceEquals(null, obj)) return false;
+      if (ReferenceEquals(this, obj)) return true;
+      if (obj.GetType() != GetType()) return false;
+      return Equals((SearchResultBatch) obj);
+    }
+    public bool Equals(SearchResultBatch other)
+    {
+      if (ReferenceEquals(null, other)) return false;
+      if (ReferenceEquals(this, other)) return true;
+      return SearchId == other.SearchId && Rows.SequenceEqual(other.Rows) && IsComplete == other.IsComplete && ErrorMessage == other.ErrorMessage;
+    }
+    //hash code trait
+    public override int GetHashCode()
+    {
+      unchecked {
+        var hash = 0;
+        hash = hash * 31 + SearchId.GetHashCode();
+        hash = hash * 31 + Rows.ContentHashCode();
+        hash = hash * 31 + IsComplete.GetHashCode();
+        hash = hash * 31 + ErrorMessage.GetHashCode();
+        return hash;
+      }
+    }
+    //pretty print
+    public void Print(PrettyPrinter printer)
+    {
+      printer.Println("SearchResultBatch (");
+      using (printer.IndentCookie()) {
+        printer.Print("searchId = "); SearchId.PrintEx(printer); printer.Println();
+        printer.Print("rows = "); Rows.PrintEx(printer); printer.Println();
+        printer.Print("isComplete = "); IsComplete.PrintEx(printer); printer.Println();
+        printer.Print("errorMessage = "); ErrorMessage.PrintEx(printer); printer.Println();
+      }
+      printer.Print(")");
+    }
+    //toString
+    public override string ToString()
+    {
+      var printer = new SingleLinePrettyPrinter();
+      Print(printer);
+      return printer.ToString();
+    }
+  }
+  
+  
+  /// <summary>
+  /// <p>Generated from: RiderIlSpyModel.kt:93</p>
+  /// </summary>
+  public sealed class SearchResultRow : IPrintable, IEquatable<SearchResultRow>
+  {
+    //fields
+    //public fields
+    [NotNull] public string AssemblyName {get; private set;}
+    [NotNull] public string Target {get; private set;}
+    [NotNull] public string Snippet {get; private set;}
+    public int MatchStart {get; private set;}
+    public int MatchLength {get; private set;}
+    [NotNull] public RiderIlSpy.Model.NavTarget NavTarget {get; private set;}
+    
+    //private fields
+    //primary constructor
+    public SearchResultRow(
+      [NotNull] string assemblyName,
+      [NotNull] string target,
+      [NotNull] string snippet,
+      int matchStart,
+      int matchLength,
+      [NotNull] RiderIlSpy.Model.NavTarget navTarget
+    )
+    {
+      if (assemblyName == null) throw new ArgumentNullException("assemblyName");
+      if (target == null) throw new ArgumentNullException("target");
+      if (snippet == null) throw new ArgumentNullException("snippet");
+      if (navTarget == null) throw new ArgumentNullException("navTarget");
+      
+      AssemblyName = assemblyName;
+      Target = target;
+      Snippet = snippet;
+      MatchStart = matchStart;
+      MatchLength = matchLength;
+      NavTarget = navTarget;
+    }
+    //secondary constructor
+    //deconstruct trait
+    public void Deconstruct([NotNull] out string assemblyName, [NotNull] out string target, [NotNull] out string snippet, out int matchStart, out int matchLength, [NotNull] out RiderIlSpy.Model.NavTarget navTarget)
+    {
+      assemblyName = AssemblyName;
+      target = Target;
+      snippet = Snippet;
+      matchStart = MatchStart;
+      matchLength = MatchLength;
+      navTarget = NavTarget;
+    }
+    //statics
+    
+    public static CtxReadDelegate<SearchResultRow> Read = (ctx, reader) => 
+    {
+      var assemblyName = reader.ReadString();
+      var target = reader.ReadString();
+      var snippet = reader.ReadString();
+      var matchStart = reader.ReadInt();
+      var matchLength = reader.ReadInt();
+      var navTarget = RiderIlSpy.Model.NavTarget.Read(ctx, reader);
+      var _result = new SearchResultRow(assemblyName, target, snippet, matchStart, matchLength, navTarget);
+      return _result;
+    };
+    
+    public static CtxWriteDelegate<SearchResultRow> Write = (ctx, writer, value) => 
+    {
+      writer.Write(value.AssemblyName);
+      writer.Write(value.Target);
+      writer.Write(value.Snippet);
+      writer.Write(value.MatchStart);
+      writer.Write(value.MatchLength);
+      RiderIlSpy.Model.NavTarget.Write(ctx, writer, value.NavTarget);
+    };
+    
+    //constants
+    
+    //custom body
+    //methods
+    //equals trait
+    public override bool Equals(object obj)
+    {
+      if (ReferenceEquals(null, obj)) return false;
+      if (ReferenceEquals(this, obj)) return true;
+      if (obj.GetType() != GetType()) return false;
+      return Equals((SearchResultRow) obj);
+    }
+    public bool Equals(SearchResultRow other)
+    {
+      if (ReferenceEquals(null, other)) return false;
+      if (ReferenceEquals(this, other)) return true;
+      return AssemblyName == other.AssemblyName && Target == other.Target && Snippet == other.Snippet && MatchStart == other.MatchStart && MatchLength == other.MatchLength && Equals(NavTarget, other.NavTarget);
+    }
+    //hash code trait
+    public override int GetHashCode()
+    {
+      unchecked {
+        var hash = 0;
+        hash = hash * 31 + AssemblyName.GetHashCode();
+        hash = hash * 31 + Target.GetHashCode();
+        hash = hash * 31 + Snippet.GetHashCode();
+        hash = hash * 31 + MatchStart.GetHashCode();
+        hash = hash * 31 + MatchLength.GetHashCode();
+        hash = hash * 31 + NavTarget.GetHashCode();
+        return hash;
+      }
+    }
+    //pretty print
+    public void Print(PrettyPrinter printer)
+    {
+      printer.Println("SearchResultRow (");
+      using (printer.IndentCookie()) {
+        printer.Print("assemblyName = "); AssemblyName.PrintEx(printer); printer.Println();
+        printer.Print("target = "); Target.PrintEx(printer); printer.Println();
+        printer.Print("snippet = "); Snippet.PrintEx(printer); printer.Println();
+        printer.Print("matchStart = "); MatchStart.PrintEx(printer); printer.Println();
+        printer.Print("matchLength = "); MatchLength.PrintEx(printer); printer.Println();
+        printer.Print("navTarget = "); NavTarget.PrintEx(printer); printer.Println();
       }
       printer.Print(")");
     }

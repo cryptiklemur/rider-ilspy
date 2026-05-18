@@ -5,13 +5,18 @@ import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
+import com.cryptiklemur.riderilspy.search.IlSpySearchSettings
 import com.intellij.util.xmlb.XmlSerializerUtil
+import com.intellij.util.xmlb.annotations.OptionTag
 
 @Service(Service.Level.APP)
 @State(name = "RiderIlSpyFrontendSettings", storages = [Storage("RiderIlSpy.xml")])
 class IlSpyFrontendSettings : PersistentStateComponent<IlSpyFrontendSettings.State> {
 
-    data class State(var mode: String = IlSpyMode.CSharp.backendName)
+    data class State(
+        var mode: String = IlSpyMode.CSharp.backendName,
+        @OptionTag var search: IlSpySearchSettings = IlSpySearchSettings(),
+    )
 
     private var internalState: State = State()
 
@@ -35,6 +40,9 @@ class IlSpyFrontendSettings : PersistentStateComponent<IlSpyFrontendSettings.Sta
         set(value) {
             internalState.mode = value.backendName
         }
+
+    val search: IlSpySearchSettings
+        get() = internalState.search
 
     companion object {
         fun getInstance(): IlSpyFrontendSettings =

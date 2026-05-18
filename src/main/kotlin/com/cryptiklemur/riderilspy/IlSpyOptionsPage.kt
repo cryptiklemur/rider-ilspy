@@ -13,3 +13,17 @@ class IlSpyOptionsPage : SimpleOptionsPage("ILSpy Decompiler", PAGE_ID) {
         const val PAGE_ID = "RiderIlSpyOptionsPage"
     }
 }
+
+
+class IlSpySearchConfigurable : com.intellij.openapi.options.Configurable {
+    private val settings = com.cryptiklemur.riderilspy.internals.IlSpyFrontendSettings.getInstance().search
+    private val optionsPanel = com.cryptiklemur.riderilspy.search.IlSpySearchOptionsPanel(settings)
+
+    override fun getDisplayName(): String = "Search"
+
+    override fun createComponent(): javax.swing.JComponent = optionsPanel.component
+
+    override fun isModified(): Boolean = false
+
+    override fun apply() {}
+}

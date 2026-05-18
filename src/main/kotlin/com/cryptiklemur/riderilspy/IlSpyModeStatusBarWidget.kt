@@ -3,6 +3,8 @@ package com.cryptiklemur.riderilspy
 import com.cryptiklemur.riderilspy.internals.IlSpyFrontendSettings
 import com.cryptiklemur.riderilspy.internals.IlSpyMode
 import com.cryptiklemur.riderilspy.internals.isIlSpyDecompiledPath
+import com.cryptiklemur.riderilspy.search.IlSpySearchClientService
+import com.cryptiklemur.riderilspy.search.IlSpySearchIndexStateSnapshot
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
@@ -36,6 +38,7 @@ class IlSpyModeStatusBarWidget(private val project: Project) :
 
     private var statusBar: StatusBar? = null
     private val installLifetime = LifetimeDefinition()
+    private var lastIndexState: IlSpySearchIndexStateSnapshot? = null
 
     override fun ID(): String = IlSpyModeStatusBarWidgetFactory.WIDGET_ID
 
@@ -49,6 +52,12 @@ class IlSpyModeStatusBarWidget(private val project: Project) :
         IlSpyProtocolHost.getInstance(project).adviseReady(installLifetime.lifetime) {
             refreshOpenIlSpyFiles()
         }
+
+        val clientService = project.getService(IlSpySearchClientService::class.java)
+        clientService.client.indexState.advise(installLifetime.lifetime) { snapshot ->
+            lastIndexState = snapshot
+            refreshStatusBar()
+        }
     }
 
     override fun dispose() {
@@ -60,7 +69,7 @@ class IlSpyModeStatusBarWidget(private val project: Project) :
         "ILSpy decompiler output mode. Click to switch — affects subsequent decompiles."
 
     override fun getSelectedValue(): String =
-        "ILSpy: ${IlSpyFrontendSettings.getInstance().mode.displayName}"
+        renderText(IlSpyFrontendSettings.getInstance().mode, lastIndexState)
 
     override fun getPopup(): JBPopup {
         val current = IlSpyFrontendSettings.getInstance().mode
@@ -81,6 +90,15 @@ class IlSpyModeStatusBarWidget(private val project: Project) :
             }
         }
         return JBPopupFactory.getInstance().createListPopup(step)
+    }
+
+    private fun renderText(mode: IlSpyMode, indexState: IlSpySearchIndexStateSnapshot?): String {
+        val base = "ILSpy: ${mode.displayName}"
+        return when (indexState?.phase) {
+            "Building" -> "$base · indexing ${indexState.indexed}/${indexState.total}"
+            "Failed" -> "$base · index failed"
+            else -> base
+        }
     }
 
     private fun refreshStatusBar() {
