@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test
  * [IlSpyResourceHandler]. Kept separate from [IlSpyResourceHandler] itself
  * so it can be tested without a [com.intellij.openapi.project.Project].
  */
-class IlSpyNavTargetResolverTests {
+class IlSpyNavTargetResolverTest {
 
     @Test
     fun `image mime hint routes to OpenAsImage`() {

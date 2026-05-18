@@ -9,21 +9,17 @@ import com.jetbrains.rd.util.lifetime.Lifetime
 import com.jetbrains.rd.util.reactive.IOptPropertyView
 import com.jetbrains.rd.util.reactive.map
 import com.jetbrains.rider.projectView.solution
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CoroutineScope
 
 class IlSpySearchClient(
     private val project: Project,
     private val lifetime: Lifetime,
-    private val scope: CoroutineScope,
-    private val debounceMs: Long = 150L,
+    scope: CoroutineScope,
+    debounceMs: Long = 150L,
 ) {
-    private val pending = AtomicReference<Job?>(null)
+    private val debouncer = Debouncer(scope, debounceMs)
     private val activeSearchIdRef = AtomicReference<String?>(null)
 
     val indexState: IOptPropertyView<IlSpySearchIndexStateSnapshot>
@@ -41,8 +37,7 @@ class IlSpySearchClient(
         maxResults: Int,
         onBatch: (SearchResultBatch) -> Unit,
     ) {
-        pending.getAndSet(scope.launch(Dispatchers.Default) {
-            delay(debounceMs)
+        debouncer.trigger {
             val searchId = UUID.randomUUID().toString()
             activeSearchIdRef.set(searchId)
             val model = project.solution.riderIlSpyModel
@@ -64,7 +59,7 @@ class IlSpySearchClient(
                 }
                 model.runSearch.start(lifetime, request)
             }
-        })?.cancel()
+        }
     }
 
     fun cancelActive() {

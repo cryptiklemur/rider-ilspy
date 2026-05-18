@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-class IlSpySearchEverywhereContributorTests {
+class IlSpySearchEverywhereContributorTest {
 
     private fun readyState() = IlSpySearchIndexStateSnapshot(phase = "Ready", indexed = 10, total = 10, skipped = 0, errorMessage = "")
     private fun buildingState() = IlSpySearchIndexStateSnapshot(phase = "Building", indexed = 3, total = 10, skipped = 0, errorMessage = "")

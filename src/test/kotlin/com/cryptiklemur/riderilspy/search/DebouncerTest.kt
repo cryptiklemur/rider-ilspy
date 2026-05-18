@@ -1,13 +1,12 @@
 package com.cryptiklemur.riderilspy.search
 
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
-import java.util.concurrent.atomic.AtomicInteger
-
-class DebouncerTests {
+class DebouncerTest {
 
     @Test
     fun `rapid-fire triggers coalesce into exactly one invocation`() = runBlocking {
