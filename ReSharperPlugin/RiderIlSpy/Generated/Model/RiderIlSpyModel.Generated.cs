@@ -36,7 +36,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:45</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:44</p>
   /// </summary>
   public class RiderIlSpyModel : RdExtBase
   {
@@ -176,7 +176,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:115</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:114</p>
   /// </summary>
   public sealed class NavResolution : IPrintable, IEquatable<NavResolution>
   {
@@ -294,7 +294,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:84</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:83</p>
   /// </summary>
   public sealed class NavTarget : IPrintable, IEquatable<NavTarget>
   {
@@ -422,7 +422,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:48</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:47</p>
   /// </summary>
   public sealed class SaveAsProjectRequest : IPrintable, IEquatable<SaveAsProjectRequest>
   {
@@ -516,7 +516,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:52</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:51</p>
   /// </summary>
   public sealed class SaveAsProjectResponse : IPrintable, IEquatable<SaveAsProjectResponse>
   {
@@ -626,7 +626,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:63</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:62</p>
   /// </summary>
   public sealed class SearchIndexState : IPrintable, IEquatable<SearchIndexState>
   {
@@ -744,7 +744,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:73</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:72</p>
   /// </summary>
   public sealed class SearchRequest : IPrintable, IEquatable<SearchRequest>
   {
@@ -890,7 +890,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:102</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:101</p>
   /// </summary>
   public sealed class SearchResultBatch : IPrintable, IEquatable<SearchResultBatch>
   {
@@ -1003,7 +1003,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:93</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:92</p>
   /// </summary>
   public sealed class SearchResultRow : IPrintable, IEquatable<SearchResultRow>
   {

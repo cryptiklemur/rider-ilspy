@@ -37,7 +37,7 @@ public class IlSpySettings
     [SettingsEntry(false, "Show diagnostic banner at the top of decompiled output")]
     public bool ShowDiagnosticBanner;
 
-    [SettingsEntry("", "Extra directories to search for runtime assemblies, separated by ';' (Linux/macOS) or ':' (any)")]
+    [SettingsEntry("", "Extra directories to search for runtime assemblies, separated by the platform path separator (';' on Windows, ':' on Linux/macOS)")]
     public string AssemblyResolveDirs = "";
 
     [SettingsEntry(true, "Use async/await syntax")]

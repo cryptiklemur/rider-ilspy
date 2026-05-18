@@ -17,6 +17,79 @@ namespace RiderIlSpy;
 // the rest of the ReSharper SDK) at type-load time.
 internal static class IlSpyExternalSourcesProviderHelpers
 {
+    /// <summary>
+    /// Picks the initial <see cref="SourceLinkOutcome"/> for a fetch given the
+    /// user's PreferSourceLink toggle and the output mode. Determines the
+    /// branch the fetch *will* take before any HTTP work happens, so the
+    /// banner can explain why SourceLink wasn't used (Disabled / SkippedMode /
+    /// NotAttempted) without re-deriving the choice later.
+    /// </summary>
+    /// <remarks>
+    /// Pure (no SDK deps), so it lives here rather than on the provider — that
+    /// also lets the choice be unit-tested in isolation from the orchestration
+    /// machinery that consumes it.
+    /// </remarks>
+    public static SourceLinkOutcome InitialSourceLinkOutcome(bool preferSourceLink, IlSpyOutputMode mode)
+    {
+        if (!preferSourceLink) return SourceLinkOutcome.Plain(SourceLinkStatus.Disabled);
+        if (mode != IlSpyOutputMode.CSharp) return SourceLinkOutcome.Plain(SourceLinkStatus.SkippedMode);
+        return SourceLinkOutcome.Plain(SourceLinkStatus.NotAttempted);
+    }
+
+    /// <summary>
+    /// True when <paramref name="fullPath"/> is a reference-only assembly file,
+    /// recognized by the canonical <c>/ref/</c> / <c>\ref\</c> / <c>.ref/</c>
+    /// path segments emitted by the .NET SDK. Reference assemblies carry no IL
+    /// bodies — decompiling one yields empty-body stubs — so callers prefer the
+    /// implementation file over any ref candidate.
+    /// </summary>
+    /// <remarks>
+    /// Pure string predicate extracted from <c>IlSpyExternalSourcesProvider.ResolveAssemblyFile</c>
+    /// so the heuristic can be regression-tested without spinning up an
+    /// IAssembly (which requires the full ReSharper SDK). The wider
+    /// ResolveAssemblyFile still lives on the provider because it walks
+    /// IAssembly.GetFiles() — the per-path predicate is the only purely
+    /// algorithmic piece worth pinning by test.
+    /// </remarks>
+    public static bool IsRefAssemblyPath(string fullPath)
+    {
+        if (string.IsNullOrEmpty(fullPath)) return false;
+        return fullPath.Contains("/ref/") || fullPath.Contains("\\ref\\") || fullPath.Contains(".ref/");
+    }
+
+    /// <summary>
+    /// Splits a delimited <paramref name="raw"/> setting value into a list of canonical
+    /// absolute directory paths, warning (via <paramref name="warn"/>) for each rejected
+    /// entry. Uses <see cref="Path.PathSeparator"/> — ';' on Windows, ':' on Linux/macOS —
+    /// so the setting string mirrors the platform's PATH convention. Returns an empty
+    /// list for null/empty/whitespace input.
+    /// </summary>
+    /// <remarks>
+    /// Extracted out of <c>IlSpyRequestSettingsBuilder.GetExtraSearchDirs</c> so the
+    /// split-and-accumulate pattern is directly unit-testable without spinning up the
+    /// ReSharper SDK. The previous inline implementation split only on ';', which
+    /// silently dropped Linux/macOS users' colon-separated lists despite the setting's
+    /// comment claiming both delimiters were supported.
+    /// </remarks>
+    public static IReadOnlyList<string> ParseExtraSearchDirs(string? raw, Action<string> warn)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return Array.Empty<string>();
+        string[] parts = raw!.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+        List<string> result = new List<string>(parts.Length);
+        foreach (string part in parts)
+        {
+            if (TryNormalizeSearchDir(part, out string canonical, out string? rejection))
+            {
+                result.Add(canonical);
+            }
+            else if (rejection != null)
+            {
+                warn(rejection);
+            }
+        }
+        return result;
+    }
+
     public static bool TryNormalizeSearchDir(string raw, out string canonical, out string? rejection)
     {
         canonical = string.Empty;

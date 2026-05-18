@@ -16,7 +16,7 @@ import kotlin.jvm.JvmStatic
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:45]
+ * #### Generated from [RiderIlSpyModel.kt:44]
  */
 class RiderIlSpyModel private constructor(
     private val _mode: RdOptionalProperty<String>,
@@ -139,7 +139,7 @@ val com.jetbrains.rd.ide.model.Solution.riderIlSpyModel get() = getOrCreateExten
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:115]
+ * #### Generated from [RiderIlSpyModel.kt:114]
  */
 data class NavResolution (
     val success: Boolean,
@@ -226,7 +226,7 @@ data class NavResolution (
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:84]
+ * #### Generated from [RiderIlSpyModel.kt:83]
  */
 data class NavTarget (
     val kind: String,
@@ -319,7 +319,7 @@ data class NavTarget (
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:48]
+ * #### Generated from [RiderIlSpyModel.kt:47]
  */
 data class SaveAsProjectRequest (
     val assemblyPath: String,
@@ -388,7 +388,7 @@ data class SaveAsProjectRequest (
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:52]
+ * #### Generated from [RiderIlSpyModel.kt:51]
  */
 data class SaveAsProjectResponse (
     val success: Boolean,
@@ -469,7 +469,7 @@ data class SaveAsProjectResponse (
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:63]
+ * #### Generated from [RiderIlSpyModel.kt:62]
  */
 data class SearchIndexState (
     val phase: String,
@@ -556,7 +556,7 @@ data class SearchIndexState (
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:73]
+ * #### Generated from [RiderIlSpyModel.kt:72]
  */
 data class SearchRequest (
     val searchId: String,
@@ -661,7 +661,7 @@ data class SearchRequest (
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:102]
+ * #### Generated from [RiderIlSpyModel.kt:101]
  */
 data class SearchResultBatch (
     val searchId: String,
@@ -742,7 +742,7 @@ data class SearchResultBatch (
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:93]
+ * #### Generated from [RiderIlSpyModel.kt:92]
  */
 data class SearchResultRow (
     val assemblyName: String,

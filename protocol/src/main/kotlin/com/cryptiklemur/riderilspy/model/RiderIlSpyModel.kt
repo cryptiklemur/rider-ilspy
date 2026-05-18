@@ -6,15 +6,14 @@ import com.jetbrains.rd.generator.nova.PredefinedType.int
 import com.jetbrains.rd.generator.nova.PredefinedType.long
 import com.jetbrains.rd.generator.nova.PredefinedType.string
 import com.jetbrains.rd.generator.nova.call
-import com.jetbrains.rd.generator.nova.immutableList
 import com.jetbrains.rd.generator.nova.csharp.CSharp50Generator
 import com.jetbrains.rd.generator.nova.field
+import com.jetbrains.rd.generator.nova.immutableList
 import com.jetbrains.rd.generator.nova.kotlin.Kotlin11Generator
 import com.jetbrains.rd.generator.nova.property
-import com.jetbrains.rd.generator.nova.signal
 import com.jetbrains.rd.generator.nova.setting
+import com.jetbrains.rd.generator.nova.signal
 import com.jetbrains.rider.model.nova.ide.SolutionModel
-
 // IPC contract for the RiderIlSpy plugin's frontend (Rider/IntelliJ) <-> backend
 // (ReSharper host) communication. Attached to SolutionModel.Solution, so an
 // instance is created per opened solution and torn down with it.

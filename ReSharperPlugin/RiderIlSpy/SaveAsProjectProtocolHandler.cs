@@ -66,6 +66,15 @@ public sealed class SaveAsProjectProtocolHandler
                 snapshot.DecompilerSettings,
                 snapshot.ExtraSearchDirs,
                 CancellationToken.None);
+            if (!result.Success)
+            {
+                ourLogger.Error("RiderIlSpy.SaveAsProject failed for " + request.AssemblyPath + ": " + result.FailureReason);
+                return new SaveAsProjectResponse(
+                    success: false,
+                    projectFilePath: result.ProjectFilePath ?? "",
+                    csharpFileCount: result.CSharpFileCount,
+                    errorMessage: result.FailureReason ?? "Unknown decompile failure");
+            }
             return new SaveAsProjectResponse(
                 success: true,
                 projectFilePath: result.ProjectFilePath ?? "",
@@ -74,7 +83,9 @@ public sealed class SaveAsProjectProtocolHandler
         }
         catch (Exception ex)
         {
-            ourLogger.Error(ex, "RiderIlSpy.SaveAsProject failed for " + request.AssemblyPath);
+            // Outer catch covers Snapshot() / settings-builder failures; the
+            // decompile itself surfaces failures via DecompileAssemblyToProjectResult.
+            ourLogger.Error(ex, "RiderIlSpy.SaveAsProject failed before decompile for " + request.AssemblyPath);
             return new SaveAsProjectResponse(
                 success: false,
                 projectFilePath: "",

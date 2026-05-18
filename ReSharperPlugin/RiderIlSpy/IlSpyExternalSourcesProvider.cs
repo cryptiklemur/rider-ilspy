@@ -76,9 +76,6 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             ourLogger.Verbose,
             ourLogger.Error);
         myRiderIlSpyModel.Mode.Advise(lifetime, myModeChangeRedecompiler.OnModeChanged);
-        // Save-as-project rd handler moved to SaveAsProjectProtocolHandler — it
-        // owns its own [SolutionComponent] subscription so the navigation
-        // provider doesn't pull in the protocol-handler concern.
     }
 
     public string PresentableShortName => "ILSpy";
@@ -87,7 +84,13 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
 
     public bool IsApplicableForNavigation(CompiledElementNavigationInfo? navigationInfo, bool ignoreOptions)
     {
-        return IsIlSpyEnabled();
+        // navigationInfo is uniformly ignored: the provider applies to any
+        // compiled element regardless of which sub-kind the platform is
+        // navigating to. The ignoreOptions branching lives in the pure
+        // static helper IlSpyNavigationApplicability.Decide so it can be
+        // unit-tested without loading the IExternalSourcesProvider type
+        // graph at test runtime.
+        return IlSpyNavigationApplicability.Decide(IsIlSpyEnabled(), ignoreOptions);
     }
 
     public bool IsPreferredForNavigation()
@@ -99,10 +102,6 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     {
         return mySettings.GetValue((IlSpySettings s) => s.Enabled);
     }
-
-    // BuildDecompilerSettings, GetExtraSearchDirs, and the TryNormalizeSearchDir
-    // wrapper moved to IlSpyRequestSettingsBuilder so the SaveAsProjectProtocolHandler
-    // can share the exact settings-build pipeline without duplicating reads.
 
     public ExternalSourcesMapping? MapFileToAssembly(FileSystemPath file)
     {
@@ -188,23 +187,17 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
                 taskExecutor);
             if (fetch == null) return null;
 
-            string content = fetch.Content;
-            // Banner is only meaningful for ILSpy output. SourceLink already
-            // returns the upstream file verbatim — prepending decompile
-            // diagnostics there would just shift the real line numbers down
-            // (annoying for "go to line N" navigation) without adding signal.
-            if (!fetch.FromSourceLink)
+            // Skip caching pure-failure output so a transient ICSharpCode.Decompiler
+            // bug doesn't pin a comment-block file in Rider's external-sources
+            // cache (and force the user to clear it manually to retry). The
+            // failure trace is still surfaced via the logger for diagnosis.
+            if (!fetch.Success)
             {
-                AssemblyBannerMetadata? bannerMeta = request.ShowBanner ? ReadBannerMetadata(assemblyFile.FullPath) : null;
-                BannerContext bannerCtx = new BannerContext(bannerMeta, assemblyFile.FullPath, fullName, request.Mode, request.ExtraSearchDirs);
-                content = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(request.ShowBanner, bannerCtx, fetch.SourceLinkOutcome, content);
+                ourLogger.Warn("RiderIlSpy.DecompileToCacheItem skipping cache write for " + fullName + ": " + (fetch.FailureReason ?? "unknown failure"));
+                return null;
             }
-            DecompilationCacheItem? result = WriteToCache(assembly, assemblyFile.FullPath, fullName, moniker, fileName, request.Mode, content);
-            if (result != null)
-            {
-                myEntryCache.Track(moniker, new TypeDecompileEntry(assembly, assemblyFile.FullPath, fullName, moniker, fileName, request.Mode));
-            }
-            return result;
+
+            return WriteEnrichedCacheItem(assembly, assemblyFile, fullName, moniker, fileName, request, fetch);
         }
         catch (Exception ex)
         {
@@ -229,7 +222,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         {
             FileSystemPath? candidatePath = candidate.Location.AssemblyPhysicalPath?.ToNativeFileSystemPath();
             if (candidatePath == null || candidatePath.IsEmpty || !candidatePath.ExistsFile) continue;
-            bool isRef = candidatePath.FullPath.Contains("/ref/") || candidatePath.FullPath.Contains("\\ref\\") || candidatePath.FullPath.Contains(".ref/");
+            bool isRef = IlSpyExternalSourcesProviderHelpers.IsRefAssemblyPath(candidatePath.FullPath);
             if (assemblyFile == null) assemblyFile = candidatePath;
             if (!isRef) { assemblyFile = candidatePath; break; }
         }
@@ -245,18 +238,10 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     /// <see cref="DecompileFetchOutcome"/> so DecompileToCacheItem doesn't have
     /// to thread four parallel locals through a closure.
     /// </summary>
-    // Initial SourceLink outcome before any HTTP attempt — captures which
-    // branch we'll take so the banner can explain *why* SourceLink didn't
-    // contribute when it didn't (Disabled by setting / SkippedMode for non-C# /
-    // NotAttempted while the fetch is still pending). Extracted out of the
-    // FetchDecompiledContent prologue so the nested ternary doesn't obscure
-    // the more interesting work that follows it.
-    private static SourceLinkOutcome InitialSourceLinkOutcome(bool preferSourceLink, IlSpyOutputMode mode)
-    {
-        if (!preferSourceLink) return SourceLinkOutcome.Plain(SourceLinkStatus.Disabled);
-        if (mode != IlSpyOutputMode.CSharp) return SourceLinkOutcome.Plain(SourceLinkStatus.SkippedMode);
-        return SourceLinkOutcome.Plain(SourceLinkStatus.NotAttempted);
-    }
+    // The InitialSourceLinkOutcome choice (pure ternary over preferSourceLink +
+    // mode) moved to IlSpyExternalSourcesProviderHelpers so it can be regression-
+    // tested without dragging in the provider's SDK surface. The caller in
+    // FetchDecompiledContent now delegates to that helper directly.
 
     private DecompileFetchOutcome? FetchDecompiledContent(
         string assemblyPath,
@@ -265,29 +250,69 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         IlSpyRequestSettings request,
         ITaskExecutor taskExecutor)
     {
-        SourceLinkOutcome initialOutcome = InitialSourceLinkOutcome(request.PreferSourceLink, request.Mode);
-        // Single bundled result holder — the worker writes one immutable
-        // DecompileFetchOutcome and we read it once after Wait. Replaces the
-        // prior pattern of three parallel closure mutables (content,
-        // fromSourceLink, sourceLinkOutcome) being mutated independently and
-        // re-bundled at the bottom. Reduces the lambda's shared-state surface
-        // to one nullable reference.
-        DecompileFetchOutcome? result = null;
+        SourceLinkOutcome initialOutcome = IlSpyExternalSourcesProviderHelpers.InitialSourceLinkOutcome(request.PreferSourceLink, request.Mode);
+        // The orchestration mechanics (task executor lambda, progress-cancel
+        // poll, doneSignal wait, timeout cancel) live in RunFetchOnExecutor.
+        // This method now just owns the SourceLink-vs-ILSpy choice and the
+        // typed-outcome bundling.
+        return RunFetchOnExecutor(
+            taskExecutor,
+            taskTitle,
+            TimeSpan.FromMinutes(2),
+            cancellationToken => FetchOnce(assemblyPath, typeFullName, request, initialOutcome, cancellationToken));
+    }
+
+    private DecompileFetchOutcome FetchOnce(
+        string assemblyPath,
+        string typeFullName,
+        IlSpyRequestSettings request,
+        SourceLinkOutcome initialOutcome,
+        CancellationToken cancellationToken)
+    {
+        SourceLinkOutcome outcome = initialOutcome;
+        if (request.PreferSourceLink && request.Mode == IlSpyOutputMode.CSharp)
+        {
+            SourceLinkAttempt attempt = mySourceLinkGateway.Fetch(assemblyPath, typeFullName, request.SourceLinkTimeoutSeconds, cancellationToken);
+            outcome = attempt.Outcome;
+            if (attempt.Content != null)
+            {
+                // SourceLink HTTP fetch only returns Content on success;
+                // there's no failure-content path from the gateway, so
+                // mirror that as Success=true.
+                return new DecompileFetchOutcome(attempt.Content, FromSourceLink: true, outcome, Success: true, FailureReason: null);
+            }
+        }
+        DecompileResult decompile = myDecompiler.DecompileType(assemblyPath, typeFullName, request.DecompilerSettings, request.ExtraSearchDirs, request.Mode);
+        return new DecompileFetchOutcome(decompile.Content, FromSourceLink: false, outcome, decompile.Success, decompile.FailureReason);
+    }
+
+    /// <summary>
+    /// Runs <paramref name="body"/> on the Rider task executor's worker thread
+    /// and blocks the calling thread (with a <paramref name="timeout"/>
+    /// ceiling) until the worker signals completion. Bridges
+    /// <see cref="IProgressIndicator.IsCanceled"/> into a shared
+    /// <see cref="CancellationToken"/> on a 100ms poll so the body's HTTP /
+    /// CPU work is cancellable via Rider's task-cancel button. Returns null
+    /// when the wait times out — the body is signalled to stop so it doesn't
+    /// keep burning CPU on a result no one is waiting for.
+    /// </summary>
+    private static T? RunFetchOnExecutor<T>(
+        ITaskExecutor taskExecutor,
+        string taskTitle,
+        TimeSpan timeout,
+        Func<CancellationToken, T> body) where T : class
+    {
+        // Single bundled result holder — the worker writes once and we read
+        // once after Wait. Reduces the lambda's shared-state surface to one
+        // nullable reference.
+        T? result = null;
         // CTS is hoisted out of the lambda so the wait-side can cancel the
-        // worker on timeout. Previously the cts was scoped to the lambda, so
-        // when Wait(2 min) returned false the worker kept running and kept
-        // mutating closure state we no longer cared about. Sharing the cts
-        // gives the wait-side its one escape hatch to abort the in-flight
-        // SourceLink HTTP fetch / DecompileType call.
+        // worker on timeout. Without this the lambda would run to completion
+        // and silently mutate `result` long after the caller stopped caring.
         using CancellationTokenSource cts = new CancellationTokenSource();
         using ManualResetEventSlim doneSignal = new ManualResetEventSlim(false);
         taskExecutor.ExecuteTask(taskTitle, TaskCancelable.Yes, progress =>
         {
-            // Bridge the platform's IProgressIndicator.IsCanceled poll into the
-            // shared CancellationToken so FetchSourceLink's HTTP fetch is
-            // actually cancellable via Rider's task cancel button (previously
-            // the token parameter existed end-to-end but no caller ever passed
-            // a live one).
             using Timer cancelPoll = new Timer(_ =>
             {
                 if (progress.IsCanceled)
@@ -297,32 +322,15 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             }, null, dueTime: 100, period: 100);
             try
             {
-                SourceLinkOutcome outcome = initialOutcome;
-                if (request.PreferSourceLink && request.Mode == IlSpyOutputMode.CSharp)
-                {
-                    SourceLinkAttempt attempt = mySourceLinkGateway.Fetch(assemblyPath, typeFullName, request.SourceLinkTimeoutSeconds, cts.Token);
-                    outcome = attempt.Outcome;
-                    if (attempt.Content != null)
-                    {
-                        result = new DecompileFetchOutcome(attempt.Content, FromSourceLink: true, outcome);
-                        return;
-                    }
-                }
-                string content = myDecompiler.DecompileType(assemblyPath, typeFullName, request.DecompilerSettings, request.ExtraSearchDirs, request.Mode).Content;
-                result = new DecompileFetchOutcome(content, FromSourceLink: false, outcome);
+                result = body(cts.Token);
             }
             finally
             {
                 doneSignal.Set();
             }
         });
-        if (!doneSignal.Wait(TimeSpan.FromMinutes(2)))
+        if (!doneSignal.Wait(timeout))
         {
-            // Worker is still running — signal it to stop so it doesn't keep
-            // burning CPU on a result we can't use. Caller gets null and the
-            // navigation surface reports "decompile abandoned". Without this
-            // the lambda would run to completion and silently mutate `result`
-            // long after we've already returned null to the caller.
             try { cts.Cancel(); } catch (ObjectDisposedException) { /* benign race with disposal */ }
             return null;
         }
@@ -342,6 +350,48 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         return result;
     }
 
+    // Single seam used by both DecompileToCacheItem and RedecompileAllEntriesAsync
+    // to build the BannerContext and prepend the banner. The two callers differ
+    // only in whether they thread a SourceLinkOutcome (fetch path) or not
+    // (redecompile path, where no SourceLink fetch is re-attempted) — so
+    // sourceLinkOutcome is nullable. Early-returns when ShowBanner is off so we
+    // skip the metadata read (matches the previous ternary).
+    private string ApplyBannerIfEnabled(string assemblyPath, string typeFullName, IlSpyRequestSettings request, SourceLinkOutcome? sourceLinkOutcome, string content)
+    {
+        if (!request.ShowBanner) return content;
+        AssemblyBannerMetadata? bannerMeta = ReadBannerMetadata(assemblyPath);
+        BannerContext bannerCtx = new BannerContext(bannerMeta, assemblyPath, typeFullName, request.Mode, request.ExtraSearchDirs);
+        return IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(showBanner: true, bannerCtx, sourceLinkOutcome, content);
+    }
+
+    // Post-fetch commit phase: banner enrichment (skipped for SourceLink output
+    // — see ApplyBannerIfEnabled rationale), WriteToCache, then entry tracking.
+    // Extracted out of DecompileToCacheItem so that method reads as a top-down
+    // pipeline (resolve → snapshot → fetch → finalize) instead of mixing the
+    // four phases in one body. The SourceLink-vs-ILSpy banner gating stays
+    // here because it's part of the finalize step's contract.
+    private DecompilationCacheItem? WriteEnrichedCacheItem(
+        IAssembly assembly,
+        FileSystemPath assemblyFile,
+        string fullName,
+        string moniker,
+        string fileName,
+        IlSpyRequestSettings request,
+        DecompileFetchOutcome fetch)
+    {
+        string content = fetch.Content;
+        if (!fetch.FromSourceLink)
+        {
+            content = ApplyBannerIfEnabled(assemblyFile.FullPath, fullName, request, fetch.SourceLinkOutcome, content);
+        }
+        DecompilationCacheItem? result = WriteToCache(assembly, assemblyFile.FullPath, fullName, moniker, fileName, request.Mode, content);
+        if (result != null)
+        {
+            myEntryCache.Track(moniker, new TypeDecompileEntry(assembly, assemblyFile.FullPath, fullName, moniker, fileName, request.Mode));
+        }
+        return result;
+    }
+
     /// <summary>
     /// Writes the decompiled <paramref name="content"/> into Rider's navigation
     /// cache, identified by the (assembly, moniker, fileName) triple.
@@ -354,10 +404,6 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         Dictionary<string, string> properties = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(mode, assemblyPath, typeFullName, moniker, fileName);
         return myCache.PutCacheItem(Id, assembly, moniker, fileName, properties, content, sourceDebugData: null);
     }
-
-    // TrackEntry / LRU cache moved to TypeEntryCache.cs — the provider holds an
-    // instance via myEntryCache. Old fields (myEntries, myEntriesAccessLock,
-    // myEntriesOrder, MaxTrackedTypes) are gone.
 
     // Provider-layer wrapper: delegates to the SDK-free
     // IlSpyExternalSourcesProviderHelpers.TryParseDecompileEntryFields parser
@@ -430,14 +476,23 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
                 // Decompilation is pure CPU work — keep it on the worker thread.
                 // The read lock is only needed for PutCacheItem below, which
                 // touches Rider's project-model-backed cache.
-                string content = myDecompiler.DecompileType(entry.AssemblyFilePath, entry.TypeFullName, request.DecompilerSettings, request.ExtraSearchDirs, request.Mode).Content;
-                AssemblyBannerMetadata? bannerMeta = request.ShowBanner ? ReadBannerMetadata(entry.AssemblyFilePath) : null;
+                DecompileResult decompile = myDecompiler.DecompileType(entry.AssemblyFilePath, entry.TypeFullName, request.DecompilerSettings, request.ExtraSearchDirs, request.Mode);
+                if (!decompile.Success)
+                {
+                    // Skip overwriting the existing cache entry with a
+                    // failure trace — if the user had a working decompile
+                    // before the redecompile pass, preserving it is better
+                    // than replacing it with a comment block for a transient
+                    // ICSharpCode.Decompiler failure.
+                    ourLogger.Warn("RiderIlSpy.RedecompileEntry skipping cache replace for " + entry.TypeFullName + ": " + (decompile.FailureReason ?? "unknown failure"));
+                    continue;
+                }
+                string content = decompile.Content;
                 // Redecompile path doesn't re-attempt SourceLink — the toggle is between
-                // ILSpy output modes (C# / IL / Mixed). Use the no-outcome overload so
-                // we don't synthesize a placeholder SourceLinkOutcome just to indicate
-                // "we didn't try" — null already says that to the formatter.
-                BannerContext bannerCtx = new BannerContext(bannerMeta, entry.AssemblyFilePath, entry.TypeFullName, request.Mode, request.ExtraSearchDirs);
-                content = IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(request.ShowBanner, bannerCtx, content);
+                // ILSpy output modes (C# / IL / Mixed). Pass null sourceLinkOutcome so
+                // we don't synthesize a placeholder just to indicate "we didn't try" —
+                // null already says that to the formatter.
+                content = ApplyBannerIfEnabled(entry.AssemblyFilePath, entry.TypeFullName, request, sourceLinkOutcome: null, content);
 
                 // Reuses the same WriteToCache helper as DecompileToCacheItem to
                 // keep the decompile -> banner -> cache pipeline single-sourced.
@@ -468,9 +523,6 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         }
     }
 
-    // TypeDecompileEntry record moved to its own file (TypeDecompileEntry.cs)
-    // so it can be referenced by TypeEntryCache without exposing internals of
-    // this provider.
 
     private static ITypeElement? GetTopLevelTypeElement(ICompiledElement element)
     {

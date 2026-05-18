@@ -83,20 +83,6 @@ public sealed class IlSpyRequestSettingsBuilder
     private IReadOnlyList<string> GetExtraSearchDirs()
     {
         string raw = mySettings.GetValue((IlSpySettings s) => s.AssemblyResolveDirs) ?? "";
-        if (raw.Length == 0) return Array.Empty<string>();
-        string[] parts = raw.Split(';', StringSplitOptions.RemoveEmptyEntries);
-        List<string> result = new List<string>(parts.Length);
-        foreach (string part in parts)
-        {
-            if (IlSpyExternalSourcesProviderHelpers.TryNormalizeSearchDir(part, out string canonical, out string? rejection))
-            {
-                result.Add(canonical);
-            }
-            else if (rejection != null)
-            {
-                myLogger.Warn(rejection);
-            }
-        }
-        return result;
+        return IlSpyExternalSourcesProviderHelpers.ParseExtraSearchDirs(raw, message => myLogger.Warn(message));
     }
 }

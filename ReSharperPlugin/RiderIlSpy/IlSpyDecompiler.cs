@@ -45,11 +45,6 @@ public class IlSpyDecompiler
 {
     private static readonly ILogger ourLogger = Logger.GetLogger<IlSpyDecompiler>();
 
-    // FetchSourceLink and the shared HttpClient moved to IlSpySourceLinkGateway
-    // — that file owns the SourceLink integration boundary, including the
-    // long-lived HttpClient. IlSpyDecompiler now only does ICSharpCode.Decompiler
-    // work: DecompileType, DecompileAssemblyInfo, DecompileAssemblyToProject.
-
     public DecompileResult DecompileType(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs = null, IlSpyOutputMode mode = IlSpyOutputMode.CSharp)
     {
         try
@@ -66,7 +61,7 @@ public class IlSpyDecompiler
         }
         catch (Exception ex)
         {
-            return DecompileResult.Fail(FormatDecompileFailure(typeFullName, ex), ex.GetType().Name + ": " + ex.Message);
+            return DecompileResult.Fail(DecompileFailureFormatter.Format(typeFullName, ex), ex.GetType().Name + ": " + ex.Message);
         }
     }
 
@@ -92,29 +87,8 @@ public class IlSpyDecompiler
             _ => DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs),
         };
 
-    // The ICSharpCode.Decompiler version-compat patch (NeuterImplicitReferences +
-    // IsTwoComponentTfmVersionBug + the static state + DynamicMethod IL emission)
-    // moved to DecompilerTypeSystemPatch.cs so this file stays focused on the
-    // decompile pipeline. Callers go through DecompilerTypeSystemPatch.{TryNeuter,
-    // GetFailureReason, IsTwoComponentTfmVersionBug}.
 
-    // Tiny shared comment-formatting helper. Both failure paths below build C#
-    // comment blocks that Rider renders as decompiled "source"; centralizing the
-    // `// ` prefix and divider conventions here keeps the layout consistent and
-    // removes the hand-rolled StringBuilder pattern from each call site.
-    private static class CommentBlock
-    {
-        public static StringBuilder Line(StringBuilder sb, string text) => sb.Append("// ").Append(text).Append('\n');
-        public static StringBuilder Divider(StringBuilder sb) => sb.Append("//\n");
-        public static StringBuilder IndentedLine(StringBuilder sb, int depth, string text)
-        {
-            sb.Append("// ");
-            for (int i = 0; i < depth; i++) sb.Append("  ");
-            return sb.Append(text).Append('\n');
-        }
-    }
-
-    private DecompileResult FallBackToIl(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs, ArgumentException original, System.Exception? retryFailure)
+    private DecompileResult FallBackToIl(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs, ArgumentException original, Exception? retryFailure)
     {
         try
         {
@@ -143,45 +117,20 @@ public class IlSpyDecompiler
         catch (Exception fallbackEx)
         {
             StringBuilder sb = new StringBuilder();
-            sb.Append(FormatDecompileFailure(typeFullName, original));
+            sb.Append(DecompileFailureFormatter.Format(typeFullName, original));
             if (retryFailure != null)
             {
                 sb.Append('\n');
                 CommentBlock.Line(sb, "CSharp retry after neutering implicit refs also failed:");
-                sb.Append(FormatDecompileFailure(typeFullName, retryFailure));
+                sb.Append(DecompileFailureFormatter.Format(typeFullName, retryFailure));
             }
             sb.Append('\n');
             CommentBlock.Line(sb, "IL fallback also failed:");
-            sb.Append(FormatDecompileFailure(typeFullName, fallbackEx));
+            sb.Append(DecompileFailureFormatter.Format(typeFullName, fallbackEx));
             return DecompileResult.Fail(sb.ToString(), "IL fallback failed: " + fallbackEx.GetType().Name + ": " + fallbackEx.Message);
         }
     }
 
-    // Wraps an exception thrown out of ICSharpCode.Decompiler into a comment-only C# file
-    // that Rider can display. Includes the full exception chain + stack trace so the user
-    // can copy/paste it into a bug report without us needing a second round-trip.
-    private static string FormatDecompileFailure(string typeFullName, System.Exception ex)
-    {
-        StringBuilder sb = new StringBuilder();
-        CommentBlock.Line(sb, "RiderIlSpy decompile failed for " + typeFullName);
-        CommentBlock.Divider(sb);
-        CommentBlock.Line(sb, "This is almost always an ICSharpCode.Decompiler bug. Please file an issue at");
-        CommentBlock.Line(sb, "https://github.com/cryptiklemur/rider-ilspy/issues with the type name and the");
-        CommentBlock.Line(sb, "trace below.");
-        CommentBlock.Divider(sb);
-        System.Exception? current = ex;
-        int depth = 0;
-        while (current != null)
-        {
-            CommentBlock.IndentedLine(sb, depth, current.GetType().FullName + ": " + current.Message);
-            if (!string.IsNullOrEmpty(current.StackTrace))
-                foreach (string line in current.StackTrace.Split('\n'))
-                    CommentBlock.IndentedLine(sb, depth + 1, line.TrimEnd('\r'));
-            current = current.InnerException;
-            depth++;
-        }
-        return sb.ToString();
-    }
     public DecompileResult DecompileAssemblyInfo(string assemblyPath, DecompilerSettings? settings = null, IReadOnlyList<string>? extraSearchDirs = null)
     {
         try
@@ -194,17 +143,11 @@ public class IlSpyDecompiler
         }
         catch (Exception ex)
         {
-            return DecompileResult.Fail(FormatDecompileFailure(assemblyPath, ex), ex.GetType().Name + ": " + ex.Message);
+            return DecompileResult.Fail(DecompileFailureFormatter.Format(assemblyPath, ex), ex.GetType().Name + ": " + ex.Message);
         }
     }
 
-    // GetAssemblyBannerMetadata removed — it was a one-liner that wrapped
-    // IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata only to add
-    // Warn-on-null logging, which belongs on the integration boundary rather
-    // than mixed into ICSharpCode.Decompiler work. Provider callers now invoke
-    // ReadAssemblyBannerMetadata directly and own their own logging.
-
-/// <summary>
+    /// <summary>
     /// Decompiles an entire assembly to a buildable C# project tree under <paramref name="targetDirectory"/>.
     /// Wraps ILSpy's <see cref="WholeProjectDecompiler"/> with the same resolver / search-dir setup that
     /// per-type decompilation uses, so the output respects the user's IlSpySettings (language version,
@@ -217,7 +160,10 @@ public class IlSpyDecompiler
     /// IlSpyExternalSourcesProvider so the IDE's user-facing toggles are honored.</param>
     /// <param name="extraSearchDirs">Optional extra assembly search dirs (matches DecompileType's contract).</param>
     /// <param name="cancellationToken">Cancellation; ILSpy honors it between types.</param>
-    /// <returns>Summary describing where the project was written and how many .cs files it contains.</returns>
+    /// <returns>Typed result with Success/FailureReason mirroring <see cref="DecompileResult"/>.
+    /// On failure, any partial files already written under <paramref name="targetDirectory"/>
+    /// are reflected in <see cref="DecompileAssemblyToProjectResult.CSharpFileCount"/>; the caller
+    /// can clean them up or surface them with the failure message.</returns>
     public DecompileAssemblyToProjectResult DecompileAssemblyToProject(
         string assemblyPath,
         string targetDirectory,
@@ -225,25 +171,68 @@ public class IlSpyDecompiler
         IReadOnlyList<string>? extraSearchDirs = null,
         CancellationToken cancellationToken = default)
     {
-        Directory.CreateDirectory(targetDirectory);
-        using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
-        UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, settings, extraSearchDirs);
-        // 4-arg ctor is the only one that accepts custom DecompilerSettings — the
-        // single-arg ctor builds its own defaults and exposes Settings as get-only.
-        // ICSharpCode.Decompiler 10.x added an IProjectFileWriter slot in position 3
-        // but Rider 2026.1 ships 8.2.x at runtime, so we MUST use the 8.2-shape ctor
-        // here. Bumping the package without verifying Rider's bundled version led
-        // to a MissingMethodException; see the csproj comment for the full story.
-        WholeProjectDecompiler projectDecompiler = new WholeProjectDecompiler(
-            settings,
-            resolver,
-            assemblyReferenceClassifier: null,
-            debugInfoProvider: null);
-        projectDecompiler.DecompileProject(module, targetDirectory, cancellationToken);
+        try
+        {
+            Directory.CreateDirectory(targetDirectory);
+            using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
+            UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, settings, extraSearchDirs);
+            // 4-arg ctor is the only one that accepts custom DecompilerSettings — the
+            // single-arg ctor builds its own defaults and exposes Settings as get-only.
+            // ICSharpCode.Decompiler 10.x added an IProjectFileWriter slot in position 3
+            // but Rider 2026.1 ships 8.2.x at runtime, so we MUST use the 8.2-shape ctor
+            // here. Bumping the package without verifying Rider's bundled version led
+            // to a MissingMethodException; see the csproj comment for the full story.
+            WholeProjectDecompiler projectDecompiler = new WholeProjectDecompiler(
+                settings,
+                resolver,
+                assemblyReferenceClassifier: null,
+                debugInfoProvider: null);
+            projectDecompiler.DecompileProject(module, targetDirectory, cancellationToken);
 
-        string? projectFilePath = Directory.EnumerateFiles(targetDirectory, "*.csproj", SearchOption.TopDirectoryOnly).FirstOrDefault();
-        int csharpFileCount = Directory.EnumerateFiles(targetDirectory, "*.cs", SearchOption.AllDirectories).Count();
-        return new DecompileAssemblyToProjectResult(targetDirectory, projectFilePath, csharpFileCount);
+            string? projectFilePath = Directory.EnumerateFiles(targetDirectory, "*.csproj", SearchOption.TopDirectoryOnly).FirstOrDefault();
+            int csharpFileCount = Directory.EnumerateFiles(targetDirectory, "*.cs", SearchOption.AllDirectories).Count();
+            return DecompileAssemblyToProjectResult.Ok(targetDirectory, projectFilePath, csharpFileCount);
+        }
+        catch (Exception ex)
+        {
+            // Survey the partial output so callers see what was written before the
+            // failure — useful for "wrote N files, then bailed on type X" UX.
+            string? partialProjectFile = SafeEnumerateProjectFile(targetDirectory);
+            int partialFileCount = SafeCountCSharpFiles(targetDirectory);
+            return DecompileAssemblyToProjectResult.Fail(
+                targetDirectory,
+                partialProjectFile,
+                partialFileCount,
+                ex.GetType().Name + ": " + ex.Message);
+        }
+    }
+
+    private static string? SafeEnumerateProjectFile(string directory)
+    {
+        try
+        {
+            return Directory.Exists(directory)
+                ? Directory.EnumerateFiles(directory, "*.csproj", SearchOption.TopDirectoryOnly).FirstOrDefault()
+                : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static int SafeCountCSharpFiles(string directory)
+    {
+        try
+        {
+            return Directory.Exists(directory)
+                ? Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories).Count()
+                : 0;
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
     }
 
     private static string DecompileToCSharp(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs)
@@ -320,7 +309,4 @@ public class IlSpyDecompiler
         return resolver;
     }
 
-    // FindTypeHandle was previously defined locally here; moved to
-    // MetadataTypeNameBuilder.FindTypeHandle so the SourceLink PDB lookup
-    // (PdbSourceLinkReader) and the decompile path use the exact same projection.
 }
