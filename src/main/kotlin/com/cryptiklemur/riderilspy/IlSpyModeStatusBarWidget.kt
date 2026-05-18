@@ -1,5 +1,6 @@
 package com.cryptiklemur.riderilspy
 
+import com.cryptiklemur.riderilspy.i18n.RiderIlSpyBundle
 import com.cryptiklemur.riderilspy.internals.IlSpyFrontendSettings
 import com.cryptiklemur.riderilspy.internals.IlSpyMode
 import com.cryptiklemur.riderilspy.internals.isIlSpyDecompiledPath
@@ -16,21 +17,8 @@ import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.StatusBar
 import com.intellij.openapi.wm.StatusBarWidget
-import com.intellij.openapi.wm.StatusBarWidgetFactory
 import com.intellij.openapi.wm.WindowManager
 import com.jetbrains.rd.util.lifetime.LifetimeDefinition
-
-class IlSpyModeStatusBarWidgetFactory : StatusBarWidgetFactory {
-    override fun getId(): String = WIDGET_ID
-    override fun getDisplayName(): String = "ILSpy Mode"
-    override fun createWidget(project: Project): StatusBarWidget = IlSpyModeStatusBarWidget(project)
-    override fun isAvailable(project: Project): Boolean = true
-    override fun canBeEnabledOn(statusBar: StatusBar): Boolean = true
-
-    companion object {
-        const val WIDGET_ID = "RiderIlSpy.ModeStatusBarWidget"
-    }
-}
 
 class IlSpyModeStatusBarWidget(private val project: Project) :
     StatusBarWidget,
@@ -66,14 +54,21 @@ class IlSpyModeStatusBarWidget(private val project: Project) :
     }
 
     override fun getTooltipText(): String =
-        "ILSpy decompiler output mode. Click to switch — affects subsequent decompiles."
+        RiderIlSpyBundle.message("statusbar.mode.tooltip")
 
     override fun getSelectedValue(): String =
-        renderText(IlSpyFrontendSettings.getInstance().mode, lastIndexState)
+        renderStatusBarLabel(
+            mode = IlSpyFrontendSettings.getInstance().mode,
+            indexState = lastIndexState,
+            bundle = { key, args -> RiderIlSpyBundle.message(key, *args) },
+        )
 
     override fun getPopup(): JBPopup {
         val current = IlSpyFrontendSettings.getInstance().mode
-        val step = object : BaseListPopupStep<IlSpyMode>("ILSpy Mode", IlSpyMode.entries.toList()) {
+        val step = object : BaseListPopupStep<IlSpyMode>(
+            RiderIlSpyBundle.message("statusbar.mode.popup_title"),
+            IlSpyMode.entries.toList(),
+        ) {
             override fun getTextFor(value: IlSpyMode): String =
                 if (value == current) "${value.displayName}  (current)" else value.displayName
 
@@ -90,15 +85,6 @@ class IlSpyModeStatusBarWidget(private val project: Project) :
             }
         }
         return JBPopupFactory.getInstance().createListPopup(step)
-    }
-
-    private fun renderText(mode: IlSpyMode, indexState: IlSpySearchIndexStateSnapshot?): String {
-        val base = "ILSpy: ${mode.displayName}"
-        return when (indexState?.phase) {
-            "Building" -> "$base · indexing ${indexState.indexed}/${indexState.total}"
-            "Failed" -> "$base · index failed"
-            else -> base
-        }
     }
 
     private fun refreshStatusBar() {
@@ -120,5 +106,25 @@ class IlSpyModeStatusBarWidget(private val project: Project) :
                 VfsUtil.markDirtyAndRefresh(true, false, false, *targets.toTypedArray())
             }
         }
+    }
+}
+
+// Top-level so it's unit-testable without an IDE harness — same pattern as
+// resourceKindToAction, shouldServe, attemptOnce. The bundle lambda is injected
+// so tests can pass a fake bundler and assert against the chosen key, instead
+// of needing the real RiderIlSpyBundle on the test classpath.
+fun renderStatusBarLabel(
+    mode: IlSpyMode,
+    indexState: IlSpySearchIndexStateSnapshot?,
+    bundle: (String, Array<out Any>) -> String,
+): String {
+    val base = bundle("statusbar.mode.label_base", arrayOf<Any>(mode.displayName))
+    return when (indexState?.phase) {
+        "Building" -> bundle(
+            "statusbar.mode.label_indexing",
+            arrayOf<Any>(base, indexState.indexed, indexState.total),
+        )
+        "Failed" -> bundle("statusbar.mode.label_failed", arrayOf<Any>(base))
+        else -> base
     }
 }

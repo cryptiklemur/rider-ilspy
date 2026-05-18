@@ -1,5 +1,6 @@
 package com.cryptiklemur.riderilspy.search
 
+import com.cryptiklemur.riderilspy.i18n.RiderIlSpyBundle
 import com.cryptiklemur.riderilspy.model.NavTarget
 import com.cryptiklemur.riderilspy.model.riderIlSpyModel
 import com.intellij.openapi.application.ApplicationManager
@@ -27,7 +28,7 @@ class IlSpyExternalNavigationGatewayImpl(
         )
         val scheduler = model.protocol?.scheduler
         if (scheduler == null) {
-            LOG.warn("ilspy-search nav-fe: protocol not ready")
+            LOG.warn(RiderIlSpyBundle.message("nav.error.protocol_not_ready"))
             return
         }
         scheduler.invokeOrQueue {
@@ -36,10 +37,11 @@ class IlSpyExternalNavigationGatewayImpl(
                 val payload = result.unwrap() as? com.cryptiklemur.riderilspy.model.NavResolution
                 ApplicationManager.getApplication().invokeLater {
                     if (payload == null || !payload.success) {
+                        val errMsg = payload?.errorMessage ?: RiderIlSpyBundle.message("nav.error.unknown")
                         Messages.showInfoMessage(
                             project,
-                            "Could not resolve decompiled source.\n${payload?.errorMessage ?: "unknown error"}",
-                            "ILSpy Search",
+                            RiderIlSpyBundle.message("nav.error.could_not_resolve", errMsg),
+                            RiderIlSpyBundle.message("nav.dialog.title"),
                         )
                         return@invokeLater
                     }
@@ -53,7 +55,11 @@ class IlSpyExternalNavigationGatewayImpl(
         val vfile = LocalFileSystem.getInstance().refreshAndFindFileByPath(path)
         if (vfile == null) {
             LOG.warn("ilspy-search nav-fe: file not found after decompile: $path")
-            Messages.showInfoMessage(project, "Decompiled file missing on disk:\n$path", "ILSpy Search")
+            Messages.showInfoMessage(
+                project,
+                RiderIlSpyBundle.message("nav.error.file_missing", path),
+                RiderIlSpyBundle.message("nav.dialog.title"),
+            )
             return
         }
         val descriptor = OpenFileDescriptor(project, vfile, (line - 1).coerceAtLeast(0), (column - 1).coerceAtLeast(0))

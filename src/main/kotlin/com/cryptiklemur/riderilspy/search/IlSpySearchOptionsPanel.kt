@@ -1,5 +1,6 @@
 package com.cryptiklemur.riderilspy.search
 
+import com.cryptiklemur.riderilspy.i18n.RiderIlSpyBundle
 import com.intellij.ui.dsl.builder.bindIntText
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.panel
@@ -7,21 +8,21 @@ import javax.swing.JComponent
 
 class IlSpySearchOptionsPanel(private val settings: IlSpySearchSettings) {
     val component: JComponent = panel {
-        group("Search") {
+        group(RiderIlSpyBundle.message("search.options.group.title")) {
             row {
-                checkBox("Enable background indexer")
+                checkBox(RiderIlSpyBundle.message("search.options.enable_indexer"))
                     .bindSelected(settings::indexerEnabled)
             }
             row {
-                checkBox("Persist index between sessions")
+                checkBox(RiderIlSpyBundle.message("search.options.persist_index"))
                     .bindSelected(settings::persistBetweenSessions)
             }
-            row("Max results per query:") {
+            row(RiderIlSpyBundle.message("search.options.max_results")) {
                 intTextField(1..50000)
                     .bindIntText(settings::maxResultsPerQuery)
             }
-            row("Excluded assemblies:") {
-                comment("Add assembly file names (one per line) in the global settings file.")
+            row(RiderIlSpyBundle.message("search.options.excluded_assemblies")) {
+                comment(RiderIlSpyBundle.message("search.options.excluded_assemblies.comment"))
             }
         }
     }

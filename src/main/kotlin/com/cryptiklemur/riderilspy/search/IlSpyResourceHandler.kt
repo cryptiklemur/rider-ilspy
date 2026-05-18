@@ -1,5 +1,6 @@
 package com.cryptiklemur.riderilspy.search
 
+import com.cryptiklemur.riderilspy.i18n.RiderIlSpyBundle
 import com.cryptiklemur.riderilspy.model.NavTarget
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -37,24 +38,35 @@ class IlSpyResourceHandler(private val project: Project) {
             // dedicated rd call for extraction (out of scope for this phase).
             Messages.showInfoMessage(
                 project,
-                "Save-as for resource '${target.resourceEntry}' not yet wired.",
-                "ILSpy Search",
+                RiderIlSpyBundle.message("resource.save_dialog.not_wired_message", target.resourceEntry),
+                RiderIlSpyBundle.message("resource.save_dialog.title"),
             )
         }
     }
 
     private fun extractToTemp(target: NavTarget): Path {
-        val dir = Path.of(
-            System.getProperty("java.io.tmpdir"),
-            "ilspy-resources",
-            target.assemblyPath.substringAfterLast('/'),
-        )
+        val name = target.resourceEntry.ifEmpty {
+            RiderIlSpyBundle.message("resource.save_dialog.default_name", target.metadataToken)
+        }
+        val rel = resourceTempRelativePath(target.assemblyPath, name)
+        val dir = Path.of(System.getProperty("java.io.tmpdir")).resolve(rel.first)
         Files.createDirectories(dir)
-        val name = target.resourceEntry.ifEmpty { "resource-${target.metadataToken}" }
-        val out = dir.resolve(name)
+        val out = dir.resolve(rel.second)
         // Prototype stub: extraction returns empty bytes.
         // Phase 12 wires the backend rd call (extractResource) for real bytes.
         Files.write(out, ByteArray(0))
         return out
     }
+}
+
+// Pure path-naming logic, extracted so the Windows-vs-Unix separator handling
+// can be unit-tested without touching the filesystem. Returns the (dir-suffix,
+// file-name) pair under ilspy-resources/<asm-basename>/<file-name>. Pure: no
+// IO, no system properties.
+fun resourceTempRelativePath(assemblyPath: String, fileName: String): Pair<String, String> {
+    // Take basename across BOTH separators so Windows paths like
+    // C:\src\foo\bar.dll route into ilspy-resources/bar.dll/ instead of
+    // ilspy-resources/C:\src\foo\bar.dll/ (which would explode on Files.createDirectories).
+    val asmBasename = assemblyPath.substringAfterLast('/').substringAfterLast('\\')
+    return "ilspy-resources/$asmBasename" to fileName
 }

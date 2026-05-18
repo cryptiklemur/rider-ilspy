@@ -1,5 +1,6 @@
 package com.cryptiklemur.riderilspy.search
 
+import com.cryptiklemur.riderilspy.i18n.RiderIlSpyBundle
 import com.cryptiklemur.riderilspy.model.NavTarget
 import com.intellij.openapi.project.Project
 
@@ -11,7 +12,7 @@ class IlSpyNavTargetResolver(
         when (target.kind) {
             "Code" -> navigateCode(target)
             "Resource" -> resourceHandler.handle(target)
-            else -> error("Unknown navTarget kind: ${target.kind}")
+            else -> error(RiderIlSpyBundle.message("nav.error.unknown_kind", target.kind))
         }
     }
 

@@ -1,5 +1,6 @@
 package com.cryptiklemur.riderilspy.search
 
+import com.cryptiklemur.riderilspy.i18n.RiderIlSpyBundle
 import com.cryptiklemur.riderilspy.model.NavTarget
 import com.cryptiklemur.riderilspy.model.SearchResultBatch
 import com.intellij.icons.AllIcons
@@ -26,11 +27,22 @@ import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreeSelectionModel
 
 class IlSpySearchToolWindowContent(private val project: Project) {
-    private val queryTypeBox = JComboBox(arrayOf("Literal", "Attribute", "Token", "Constant", "Resource"))
+    // The selectedItem.protocolId is what we send to the backend; the toString()
+    // override is what the user sees. Keep them split so localizing the labels
+    // doesn't change the protocol payload.
+    private val queryTypeBox = JComboBox(
+        arrayOf(
+            QueryTypeChoice("Literal", RiderIlSpyBundle.message("search.toolwindow.query_type.literal")),
+            QueryTypeChoice("Attribute", RiderIlSpyBundle.message("search.toolwindow.query_type.attribute")),
+            QueryTypeChoice("Token", RiderIlSpyBundle.message("search.toolwindow.query_type.token")),
+            QueryTypeChoice("Constant", RiderIlSpyBundle.message("search.toolwindow.query_type.constant")),
+            QueryTypeChoice("Resource", RiderIlSpyBundle.message("search.toolwindow.query_type.resource")),
+        ),
+    )
     private val inputField = JTextField()
-    private val regexBox = JCheckBox("regex")
-    private val caseBox = JCheckBox("case-sensitive")
-    private val wordBox = JCheckBox("whole word")
+    private val regexBox = JCheckBox(RiderIlSpyBundle.message("search.toolwindow.regex"))
+    private val caseBox = JCheckBox(RiderIlSpyBundle.message("search.toolwindow.case_sensitive"))
+    private val wordBox = JCheckBox(RiderIlSpyBundle.message("search.toolwindow.whole_word"))
     private val statusLabel = JBLabel(" ")
 
     private val rootNode = DefaultMutableTreeNode("results")
@@ -40,7 +52,7 @@ class IlSpySearchToolWindowContent(private val project: Project) {
         showsRootHandles = true
         selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
         cellRenderer = ResultsTreeRenderer()
-        emptyText.text = "no results yet"
+        emptyText.text = RiderIlSpyBundle.message("search.toolwindow.empty_text")
     }
 
     private val assemblyNodes = mutableMapOf<String, AssemblyGroupNode>()
@@ -76,7 +88,7 @@ class IlSpySearchToolWindowContent(private val project: Project) {
         val client = project.getService(IlSpySearchClientService::class.java).client
         clearResults()
         client.runSearch(
-            queryType = queryTypeBox.selectedItem as String,
+            queryType = (queryTypeBox.selectedItem as QueryTypeChoice).protocolId,
             input = inputField.text,
             assemblyFilter = emptyList(),
             regex = regexBox.isSelected,
@@ -115,19 +127,28 @@ class IlSpySearchToolWindowContent(private val project: Project) {
                 i++
             }
             statusLabel.text = if (batch.isComplete)
-                "$totalHits results in ${assemblyNodes.size} assemblies"
+                RiderIlSpyBundle.message("search.toolwindow.status.results", totalHits, assemblyNodes.size)
             else
-                "$totalHits results in ${assemblyNodes.size} assemblies... still searching"
+                RiderIlSpyBundle.message("search.toolwindow.status.results_searching", totalHits, assemblyNodes.size)
         }
     }
 
     private fun renderState(snapshot: IlSpySearchIndexStateSnapshot) {
         SwingUtilities.invokeLater {
             statusLabel.text = when (snapshot.phase) {
-                "Building" -> "indexing ${snapshot.indexed}/${snapshot.total}"
-                "Failed" -> "indexing failed: ${snapshot.errorMessage}"
-                "Idle" -> "idle"
-                else -> if (snapshot.skipped > 0) "${snapshot.indexed} indexed · ${snapshot.skipped} skipped" else "${snapshot.indexed} indexed"
+                "Building" -> RiderIlSpyBundle.message(
+                    "search.toolwindow.status.indexing", snapshot.indexed, snapshot.total,
+                )
+                "Failed" -> RiderIlSpyBundle.message(
+                    "search.toolwindow.status.indexing_failed", snapshot.errorMessage,
+                )
+                "Idle" -> RiderIlSpyBundle.message("search.toolwindow.status.idle")
+                else -> if (snapshot.skipped > 0)
+                    RiderIlSpyBundle.message(
+                        "search.toolwindow.status.indexed_skipped", snapshot.indexed, snapshot.skipped,
+                    )
+                else
+                    RiderIlSpyBundle.message("search.toolwindow.status.indexed", snapshot.indexed)
             }
         }
     }
@@ -139,7 +160,11 @@ class IlSpySearchToolWindowContent(private val project: Project) {
         val row1 = JPanel(BorderLayout())
         row1.add(queryTypeBox, BorderLayout.WEST)
         row1.add(inputField, BorderLayout.CENTER)
-        row1.add(JButton("Search").apply { addActionListener { runSearch() } }, BorderLayout.EAST)
+        row1.add(
+            JButton(RiderIlSpyBundle.message("search.toolwindow.search_button"))
+                .apply { addActionListener { runSearch() } },
+            BorderLayout.EAST,
+        )
         val row2 = JPanel()
         row2.add(regexBox)
         row2.add(caseBox)
@@ -148,6 +173,10 @@ class IlSpySearchToolWindowContent(private val project: Project) {
         bar.add(row2)
         return bar
     }
+}
+
+private data class QueryTypeChoice(val protocolId: String, val displayLabel: String) {
+    override fun toString(): String = displayLabel
 }
 
 private class AssemblyGroupNode(val payload: AssemblyGroupPayload) : DefaultMutableTreeNode(payload, true)

@@ -1,5 +1,6 @@
 package com.cryptiklemur.riderilspy.search
 
+import com.cryptiklemur.riderilspy.i18n.RiderIlSpyBundle
 import com.cryptiklemur.riderilspy.model.SearchResultBatch
 import com.intellij.ide.actions.searcheverywhere.SearchEverywhereContributor
 import com.intellij.ide.actions.searcheverywhere.SearchEverywhereContributorFactory
@@ -15,7 +16,7 @@ import javax.swing.ListCellRenderer
 class IlSpySearchEverywhereContributor(private val project: Project) : SearchEverywhereContributor<IlSpyLiteralMatch> {
 
     override fun getSearchProviderId(): String = "ILSpyLiterals"
-    override fun getGroupName(): String = "ILSpy Literals"
+    override fun getGroupName(): String = RiderIlSpyBundle.message("search.everywhere.group_name")
     override fun getSortWeight(): Int = 1500
     override fun showInFindResults(): Boolean = false
 

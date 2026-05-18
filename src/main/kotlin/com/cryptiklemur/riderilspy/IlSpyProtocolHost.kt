@@ -26,8 +26,6 @@ import com.jetbrains.rider.projectView.solution
 @Service(Service.Level.PROJECT)
 class IlSpyProtocolHost(private val project: Project) : LifetimedService() {
 
-    private val log: Logger = Logger.getInstance(IlSpyProtocolHost::class.java)
-
     /**
      * Push the current mode to the backend. Safe to call from any thread; this
      * marshals onto the EDT because RdOptionalProperty.set asserts the protocol
@@ -48,7 +46,7 @@ class IlSpyProtocolHost(private val project: Project) : LifetimedService() {
             // have nothing to grep when reporting "mode switch did nothing".
             // Info level — same protocol-binding race as [pushInitialModeWithRetry];
             // see that method for the retry policy at init time.
-            log.info("Deferred ILSpy mode push (protocol not bound yet)", error)
+            LOG.info("Deferred ILSpy mode push (protocol not bound yet)", error)
         }
     }
 
@@ -83,7 +81,7 @@ class IlSpyProtocolHost(private val project: Project) : LifetimedService() {
             // Same protocol-binding race as setMode and the init-time push; the
             // retried code path is [pushInitialModeWithRetry], steady-state is
             // here — info only because retry isn't actionable after init wins.
-            log.info("Deferred ILSpy readyTick advise (protocol not bound yet)", error)
+            LOG.info("Deferred ILSpy readyTick advise (protocol not bound yet)", error)
         }
     }
 
@@ -118,11 +116,13 @@ class IlSpyProtocolHost(private val project: Project) : LifetimedService() {
             }
         }
         if (!ok && lastError != null && !project.isDisposed) {
-            log.info("Gave up initial ILSpy mode push after ${initialModePushSchedule.size} attempts (protocol still unbound)", lastError)
+            LOG.info("Gave up initial ILSpy mode push after ${initialModePushSchedule.size} attempts (protocol still unbound)", lastError)
         }
     }
 
     companion object {
+        private val LOG = Logger.getInstance(IlSpyProtocolHost::class.java)
+
         fun getInstance(project: Project): IlSpyProtocolHost =
             project.getService(IlSpyProtocolHost::class.java)
     }

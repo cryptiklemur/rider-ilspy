@@ -1,11 +1,10 @@
 package com.cryptiklemur.riderilspy
 
 import com.cryptiklemur.riderilspy.model.RiderIlSpyModel
+import kotlin.reflect.full.memberProperties
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import kotlin.reflect.full.memberProperties
-
 /**
  * Schema-shape contract for the rd-generated [RiderIlSpyModel]. The C# backend
  * depends on the property and signal names being exactly "mode" and "readyTick"
@@ -51,7 +50,7 @@ class RiderIlSpyModelContractTest {
     }
 
     /**
-     * Pins the rd-call surface used by [SaveAsProjectAction]. The kotlin action
+     * Pins the rd-call surface used by [IlSpySaveAsProjectAction]. The kotlin action
      * calls `saveAsProject.sync(...)` and the C# backend's `SetSync` handler is
      * keyed on the property name — rd-gen renaming or dropping this would
      * silently break the action with no compile error on either side.

@@ -1,5 +1,6 @@
 package com.cryptiklemur.riderilspy
 
+import com.cryptiklemur.riderilspy.i18n.RiderIlSpyBundle
 import com.cryptiklemur.riderilspy.model.SaveAsProjectRequest
 import com.cryptiklemur.riderilspy.model.riderIlSpyModel
 import com.intellij.notification.NotificationGroupManager
@@ -45,9 +46,7 @@ import java.io.File
  * which surfaces the file under Assembly Explorer; this action then becomes
  * available on its right-click.
  */
-class SaveAsProjectAction : AnAction() {
-    private val log: Logger = Logger.getInstance(SaveAsProjectAction::class.java)
-
+class IlSpySaveAsProjectAction : AnAction() {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun update(e: AnActionEvent) {
@@ -62,22 +61,22 @@ class SaveAsProjectAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val assemblyPath = findAssemblyPathFromContext(e) ?: run {
-            log.warn("SaveAsProjectAction invoked without an assembly path in context")
+            LOG.warn("IlSpySaveAsProjectAction invoked without an assembly path in context")
             return
         }
 
         val dirDescriptor = FileChooserDescriptorFactory
             .singleDir()
-            .withTitle("Choose Output Directory")
-            .withDescription("ILSpy will write a .csproj and source files into this folder.")
+            .withTitle(RiderIlSpyBundle.message("action.save_as_project.chooser.title"))
+            .withDescription(RiderIlSpyBundle.message("action.save_as_project.chooser.description"))
         val outDir = FileChooser.chooseFile(dirDescriptor, project, null) ?: return
 
         val assemblyName = assemblyPath.substringAfterLast('/').substringAfterLast('\\')
-        val title = "Decompiling $assemblyName to project"
+        val title = RiderIlSpyBundle.message("action.save_as_project.progress.title", assemblyName)
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, title, true) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.isIndeterminate = true
-                indicator.text = "Decompiling $assemblyName via ILSpy..."
+                indicator.text = RiderIlSpyBundle.message("action.save_as_project.progress.text", assemblyName)
                 runSaveAsProject(project, assemblyPath, outDir.path)
             }
         })
@@ -113,8 +112,12 @@ class SaveAsProjectAction : AnAction() {
         val response = try {
             project.solution.riderIlSpyModel.saveAsProject.sync(SaveAsProjectRequest(assemblyPath, targetDirectory))
         } catch (t: Throwable) {
-            log.warn("RiderIlSpy SaveAsProject rd-call failed", t)
-            notify(project, "Save as project failed: ${t.message ?: t.javaClass.simpleName}", NotificationType.ERROR)
+            LOG.warn("RiderIlSpy SaveAsProject rd-call failed", t)
+            notify(
+                project,
+                RiderIlSpyBundle.message("action.save_as_project.notification.failure", t.message ?: t.javaClass.simpleName),
+                NotificationType.ERROR,
+            )
             return
         }
 
@@ -122,12 +125,18 @@ class SaveAsProjectAction : AnAction() {
             val where = response.projectFilePath.ifBlank { targetDirectory }
             notify(
                 project,
-                "Wrote ${response.csharpFileCount} C# files to $where",
+                RiderIlSpyBundle.message("action.save_as_project.notification.success", response.csharpFileCount, where),
                 NotificationType.INFORMATION,
             )
         } else {
-            val msg = response.errorMessage.ifBlank { "ILSpy returned no error message" }
-            notify(project, "Save as project failed: $msg", NotificationType.ERROR)
+            val msg = response.errorMessage.ifBlank {
+                RiderIlSpyBundle.message("action.save_as_project.notification.no_error_message")
+            }
+            notify(
+                project,
+                RiderIlSpyBundle.message("action.save_as_project.notification.failure", msg),
+                NotificationType.ERROR,
+            )
         }
     }
 
@@ -143,6 +152,8 @@ class SaveAsProjectAction : AnAction() {
     }
 
     companion object {
-        const val NOTIFICATION_GROUP_ID: String = "RiderIlSpy"
+        const val NOTIFICATION_GROUP_ID = "RiderIlSpy"
+
+        private val LOG = Logger.getInstance(IlSpySaveAsProjectAction::class.java)
     }
 }
