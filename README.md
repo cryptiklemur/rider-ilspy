@@ -10,7 +10,10 @@ Replaces Rider's built-in decompiler with [ILSpy](https://github.com/icsharpcode
 - Status-bar widget to switch decompiler output between **C#**, **IL**, and **C# + IL**
 - Mode changes refresh open decompiled editors in place (no close/reopen)
 - Mixed mode interleaves IL with the matching C# source lines as comments at the correct offsets — same as the Windows ILSpy GUI
+- **ILSpy Search** tool window (right sidebar) — query literals, attributes, tokens, constants, and resources across every indexed assembly in the solution; jump straight into decompiled source from any hit
 - Settings page (Preferences → Tools → ILSpy Decompiler) for fine-grained decompiler flags and extra assembly search dirs
+
+<img src="docs/screenshot-search-toolwindow.png" alt="ILSpy Search tool window listing matches for the literal 'Argument' grouped by assembly across 6 NuGet / framework binaries" width="420">
 
 ## Requirements
 
