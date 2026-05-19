@@ -97,12 +97,9 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
 
     public bool IsApplicableForNavigation(CompiledElementNavigationInfo? navigationInfo, bool ignoreOptions)
     {
-        // navigationInfo is uniformly ignored: the provider applies to any
-        // compiled element regardless of which sub-kind the platform is
-        // navigating to. The ignoreOptions branching lives in the pure
-        // static helper IlSpyNavigationApplicability.Decide so it can be
-        // unit-tested without loading the IExternalSourcesProvider type
-        // graph at test runtime.
+        // Pure gating decision (enabled / ignoreOptions) lives in a helper so
+        // it can be unit-tested without loading the IExternalSourcesProvider
+        // type graph at test runtime.
         return IlSpyNavigationApplicability.Decide(IsIlSpyEnabled(), ignoreOptions);
     }
 
@@ -110,13 +107,15 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     {
         // IlSpyNavigationPreference.Decide is a pure helper kept outside this
         // class so the logic is unit-testable without the IExternalSourcesProvider
-        // type graph. Returning false (when DeferToRiderSources is on) lets
-        // Rider's own preferred-source providers — downloaded source, SourceLink,
-        // Microsoft Reference Source — win for types that ship real source.
-        // ILSpy remains the fallback via IsApplicableForNavigation.
-        return IlSpyNavigationPreference.Decide(
-            IsIlSpyEnabled(),
-            mySettings.GetValue((IlSpySettings s) => s.DeferToRiderSources));
+        // type graph. Returns true whenever the plugin is enabled, which makes
+        // ILSpy the *preferred* provider — the orchestrator
+        // (ExternalSourcesServiceImpl.NavigateToSources) puts the preferred
+        // provider at the front of its iteration and only falls through to
+        // peer providers when our NavigateToSources returns empty. Without
+        // this, JB's bundled DecompiledSourcesExternalSourcesProvider
+        // (registered before our plugin) wins every navigation race even
+        // when ILSpy is enabled.
+        return IlSpyNavigationPreference.Decide(IsIlSpyEnabled());
     }
 
     // Source of truth for the master on/off flag is the Kotlin frontend's

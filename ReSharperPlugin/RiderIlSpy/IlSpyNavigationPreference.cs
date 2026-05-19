@@ -10,17 +10,28 @@ public static class IlSpyNavigationPreference
 {
     /// <summary>
     /// Returns true when ILSpy should be advertised as the *preferred*
-    /// navigation target, short-circuiting peer providers. When
-    /// <paramref name="deferToRiderSources"/> is true, returns false so
-    /// Rider's own preferred-source providers (downloaded source,
-    /// SourceLink, Microsoft Reference Source) get to claim the navigation
-    /// for types where they can produce real source. ILSpy remains the
-    /// fallback via <see cref="IlSpyExternalSourcesProvider.IsApplicableForNavigation"/>
-    /// when no other provider claims the navigation.
+    /// navigation target, jumping to the front of the platform's provider
+    /// iteration order.
+    ///
+    /// Why this is unconditional when enabled: the orchestrator
+    /// (ExternalSourcesServiceImpl.NavigateToSources in
+    /// JetBrains.ReSharper.Feature.Services.ExternalSources.dll) picks the
+    /// first applicable provider whose NavigateToSources returns a non-empty
+    /// result. When no provider is preferred, providers run in registration
+    /// order — and JB's bundled DecompiledSourcesExternalSourcesProvider
+    /// registers before this plugin's, so it wins every race and the user
+    /// sees JB's decompiled output instead of ILSpy's. Returning true here
+    /// puts ILSpy at the front of the queue, restoring the user's expected
+    /// behavior ("ILSpy is on, so ILSpy decompiles").
+    ///
+    /// Real-source delivery for SourceLink-backed types is handled inside
+    /// our own NavigateToSources, which attempts SourceLink first before
+    /// falling back to ILSpy decompilation — so being preferred does NOT
+    /// rob users of real source for libraries that publish SourceLink.
     ///
     /// When <paramref name="ilSpyEnabled"/> is false, returns false
-    /// unconditionally (the user has the plugin switched off).
+    /// unconditionally (the user has the plugin switched off via the
+    /// status-bar widget).
     /// </summary>
-    public static bool Decide(bool ilSpyEnabled, bool deferToRiderSources) =>
-        ilSpyEnabled && !deferToRiderSources;
+    public static bool Decide(bool ilSpyEnabled) => ilSpyEnabled;
 }

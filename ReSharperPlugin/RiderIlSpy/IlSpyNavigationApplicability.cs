@@ -11,11 +11,14 @@ public static class IlSpyNavigationApplicability
 {
     /// <summary>
     /// Returns true when ILSpy should be advertised as a navigation target.
-    /// When <paramref name="ignoreOptions"/> is true the platform is asking
-    /// "would you handle this if the user toggle were ignored?" — the
-    /// JetBrains convention is to answer affirmatively regardless of the
-    /// user's <c>IlSpySettings.Enabled</c> state. Otherwise gates on
-    /// <paramref name="ilSpyEnabled"/>.
+    ///
+    /// Rules, in order:
+    /// 1. When <paramref name="ignoreOptions"/> is true the platform is asking
+    ///    "would you handle this if the user toggle were ignored?" — the
+    ///    JetBrains convention is to answer affirmatively regardless of any
+    ///    other gate so the platform can probe our capability honestly.
+    /// 2. Otherwise the user toggle wins: applicable iff
+    ///    <paramref name="ilSpyEnabled"/> is true.
     /// </summary>
     public static bool Decide(bool ilSpyEnabled, bool ignoreOptions) =>
         ignoreOptions || ilSpyEnabled;

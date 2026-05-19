@@ -3,41 +3,34 @@ using Xunit;
 namespace RiderIlSpy.Tests;
 
 // Pins the IsPreferredForNavigation contract: ILSpy is the preferred
-// provider only when (a) the user has the plugin enabled AND (b) the user
-// has NOT opted to defer to Rider's downloaded sources. The full
-// IsPreferredForNavigation method requires a real IExternalSourcesProvider
-// context to construct, so the gating logic lives in
-// IlSpyNavigationPreference.Decide — a pure static helper with no JetBrains
-// dependencies — and is tested here directly.
+// provider whenever the plugin is enabled. The full IsPreferredForNavigation
+// method requires a real IExternalSourcesProvider context to construct, so
+// the gating logic lives in IlSpyNavigationPreference.Decide — a pure
+// static helper with no JetBrains dependencies — and is tested here
+// directly.
 //
-// Regression context: before DeferToRiderSources existed, ILSpy always
-// returned IsPreferredForNavigation=true (when enabled), short-circuiting
-// peer providers including Rider's downloaded-source path. That caused
-// BCL navigation to always decompile instead of opening real source.
-// These tests pin the new behavior so the regression cannot return.
+// Regression context (do not "fix" by re-introducing a defer flag):
+// JetBrains' bundled DecompiledSourcesExternalSourcesProvider is also
+// applicable for the same compiled-element navigations as this plugin.
+// The orchestrator (ExternalSourcesServiceImpl.NavigateToSources) iterates
+// applicable providers in registration order and picks the first one whose
+// NavigateToSources returns non-empty. Without IsPreferred=true, JB's
+// provider — registered before this plugin — always wins, so the user
+// sees JB's decompiled output even with ILSpy enabled. A prior change
+// returned IsPreferred=false hoping the platform would fall through to
+// Rider's downloaded-source / SourceLink path; in practice it just handed
+// the win to JB's decompiler. These tests pin the corrected behavior.
 public class IlSpyExternalSourcesProviderPreferenceTests
 {
     [Fact]
     public void Disabled_is_never_preferred()
     {
-        Assert.False(IlSpyNavigationPreference.Decide(ilSpyEnabled: false, deferToRiderSources: false));
+        Assert.False(IlSpyNavigationPreference.Decide(ilSpyEnabled: false));
     }
 
     [Fact]
-    public void Disabled_and_deferring_is_never_preferred()
+    public void Enabled_is_preferred()
     {
-        Assert.False(IlSpyNavigationPreference.Decide(ilSpyEnabled: false, deferToRiderSources: true));
-    }
-
-    [Fact]
-    public void Enabled_and_not_deferring_is_preferred()
-    {
-        Assert.True(IlSpyNavigationPreference.Decide(ilSpyEnabled: true, deferToRiderSources: false));
-    }
-
-    [Fact]
-    public void Enabled_but_deferring_is_not_preferred()
-    {
-        Assert.False(IlSpyNavigationPreference.Decide(ilSpyEnabled: true, deferToRiderSources: true));
+        Assert.True(IlSpyNavigationPreference.Decide(ilSpyEnabled: true));
     }
 }

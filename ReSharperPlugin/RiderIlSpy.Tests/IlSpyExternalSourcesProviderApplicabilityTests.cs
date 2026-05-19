@@ -2,14 +2,16 @@ using Xunit;
 
 namespace RiderIlSpy.Tests;
 
-// Pins the IsApplicableForNavigation contract: when ignoreOptions=true the
-// provider must advertise availability regardless of the user toggle (the
-// JetBrains platform convention for "would you handle this if options were
-// ignored?"); when ignoreOptions=false the user's IlSpySettings.Enabled gates
-// it. The full IsApplicableForNavigation method requires a real
-// IExternalSourcesProvider context to construct, so the gating logic is
-// extracted into IlSpyNavigationApplicability.Decide — a pure static helper
-// with no JetBrains dependencies — and tested here directly.
+// Pins the IsApplicableForNavigation contract. Rules:
+//   1. ignoreOptions=true → always applicable (platform's "would you handle
+//      this if options were ignored?" probe — answer honestly).
+//   2. enabled=false → not applicable (user has the plugin switched off).
+//   3. otherwise → applicable.
+//
+// The full IsApplicableForNavigation method requires a real
+// IExternalSourcesProvider context to construct, so the gating logic lives
+// in IlSpyNavigationApplicability.Decide — a pure static helper with no
+// JetBrains dependencies — and is tested here directly.
 public class IlSpyExternalSourcesProviderApplicabilityTests
 {
     [Fact]
