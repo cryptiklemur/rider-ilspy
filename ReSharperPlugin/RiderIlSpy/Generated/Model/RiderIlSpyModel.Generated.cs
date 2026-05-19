@@ -43,6 +43,7 @@ namespace RiderIlSpy.Model
     //fields
     //public fields
     [NotNull] public IViewableProperty<string> Mode => _Mode;
+    [NotNull] public IViewableProperty<bool> Enabled => _Enabled;
     [NotNull] public ISignal<long> ReadyTick => _ReadyTick;
     [NotNull] public IRdEndpoint<SaveAsProjectRequest, SaveAsProjectResponse> SaveAsProject => _SaveAsProject;
     [NotNull] public IViewableProperty<RiderIlSpy.Model.SearchIndexState> SearchIndexState => _SearchIndexState;
@@ -54,6 +55,7 @@ namespace RiderIlSpy.Model
     
     //private fields
     [NotNull] private readonly RdProperty<string> _Mode;
+    [NotNull] private readonly RdProperty<bool> _Enabled;
     [NotNull] private readonly RdSignal<long> _ReadyTick;
     [NotNull] private readonly RdCall<SaveAsProjectRequest, SaveAsProjectResponse> _SaveAsProject;
     [NotNull] private readonly RdProperty<RiderIlSpy.Model.SearchIndexState> _SearchIndexState;
@@ -66,6 +68,7 @@ namespace RiderIlSpy.Model
     //primary constructor
     private RiderIlSpyModel(
       [NotNull] RdProperty<string> mode,
+      [NotNull] RdProperty<bool> enabled,
       [NotNull] RdSignal<long> readyTick,
       [NotNull] RdCall<SaveAsProjectRequest, SaveAsProjectResponse> saveAsProject,
       [NotNull] RdProperty<RiderIlSpy.Model.SearchIndexState> searchIndexState,
@@ -77,6 +80,7 @@ namespace RiderIlSpy.Model
     )
     {
       if (mode == null) throw new ArgumentNullException("mode");
+      if (enabled == null) throw new ArgumentNullException("enabled");
       if (readyTick == null) throw new ArgumentNullException("readyTick");
       if (saveAsProject == null) throw new ArgumentNullException("saveAsProject");
       if (searchIndexState == null) throw new ArgumentNullException("searchIndexState");
@@ -87,6 +91,7 @@ namespace RiderIlSpy.Model
       if (resolveNavTarget == null) throw new ArgumentNullException("resolveNavTarget");
       
       _Mode = mode;
+      _Enabled = enabled;
       _ReadyTick = readyTick;
       _SaveAsProject = saveAsProject;
       _SearchIndexState = searchIndexState;
@@ -96,8 +101,10 @@ namespace RiderIlSpy.Model
       _RescanAssembly = rescanAssembly;
       _ResolveNavTarget = resolveNavTarget;
       _Mode.OptimizeNested = true;
+      _Enabled.OptimizeNested = true;
       _SearchIndexState.OptimizeNested = true;
       BindableChildren.Add(new KeyValuePair<string, object>("mode", _Mode));
+      BindableChildren.Add(new KeyValuePair<string, object>("enabled", _Enabled));
       BindableChildren.Add(new KeyValuePair<string, object>("readyTick", _ReadyTick));
       BindableChildren.Add(new KeyValuePair<string, object>("saveAsProject", _SaveAsProject));
       BindableChildren.Add(new KeyValuePair<string, object>("searchIndexState", _SearchIndexState));
@@ -111,6 +118,7 @@ namespace RiderIlSpy.Model
     internal RiderIlSpyModel (
     ) : this (
       new RdProperty<string>(JetBrains.Rd.Impl.Serializers.ReadString, JetBrains.Rd.Impl.Serializers.WriteString),
+      new RdProperty<bool>(JetBrains.Rd.Impl.Serializers.ReadBool, JetBrains.Rd.Impl.Serializers.WriteBool),
       new RdSignal<long>(JetBrains.Rd.Impl.Serializers.ReadLong, JetBrains.Rd.Impl.Serializers.WriteLong),
       new RdCall<SaveAsProjectRequest, SaveAsProjectResponse>(SaveAsProjectRequest.Read, SaveAsProjectRequest.Write, SaveAsProjectResponse.Read, SaveAsProjectResponse.Write),
       new RdProperty<RiderIlSpy.Model.SearchIndexState>(RiderIlSpy.Model.SearchIndexState.Read, RiderIlSpy.Model.SearchIndexState.Write),
@@ -125,7 +133,7 @@ namespace RiderIlSpy.Model
     
     
     
-    protected override long SerializationHash => -6103727641922359333L;
+    protected override long SerializationHash => -956756264648943532L;
     
     protected override Action<ISerializers> Register => RegisterDeclaredTypesSerializers;
     public static void RegisterDeclaredTypesSerializers(ISerializers serializers)
@@ -147,6 +155,7 @@ namespace RiderIlSpy.Model
       printer.Println("RiderIlSpyModel (");
       using (printer.IndentCookie()) {
         printer.Print("mode = "); _Mode.PrintEx(printer); printer.Println();
+        printer.Print("enabled = "); _Enabled.PrintEx(printer); printer.Println();
         printer.Print("readyTick = "); _ReadyTick.PrintEx(printer); printer.Println();
         printer.Print("saveAsProject = "); _SaveAsProject.PrintEx(printer); printer.Println();
         printer.Print("searchIndexState = "); _SearchIndexState.PrintEx(printer); printer.Println();
@@ -176,7 +185,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:114</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:121</p>
   /// </summary>
   public sealed class NavResolution : IPrintable, IEquatable<NavResolution>
   {
@@ -294,7 +303,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:83</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:90</p>
   /// </summary>
   public sealed class NavTarget : IPrintable, IEquatable<NavTarget>
   {
@@ -626,7 +635,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:62</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:69</p>
   /// </summary>
   public sealed class SearchIndexState : IPrintable, IEquatable<SearchIndexState>
   {
@@ -744,7 +753,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:72</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:79</p>
   /// </summary>
   public sealed class SearchRequest : IPrintable, IEquatable<SearchRequest>
   {
@@ -890,7 +899,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:101</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:108</p>
   /// </summary>
   public sealed class SearchResultBatch : IPrintable, IEquatable<SearchResultBatch>
   {
@@ -1003,7 +1012,7 @@ namespace RiderIlSpy.Model
   
   
   /// <summary>
-  /// <p>Generated from: RiderIlSpyModel.kt:92</p>
+  /// <p>Generated from: RiderIlSpyModel.kt:99</p>
   /// </summary>
   public sealed class SearchResultRow : IPrintable, IEquatable<SearchResultRow>
   {

@@ -14,6 +14,11 @@ class IlSpyFrontendSettings : PersistentStateComponent<IlSpyFrontendSettings.Sta
 
     data class State(
         var mode: String = IlSpyMode.CSharp.backendName,
+        // Master on/off for the plugin. Persisted here (not on the C# side)
+        // so the source of truth survives IDE restart and the C# backend
+        // gets it pushed via rd protocol on each solution open. Default
+        // true preserves existing installs' behavior.
+        var enabled: Boolean = true,
         @OptionTag var search: IlSpySearchSettings = IlSpySearchSettings(),
     )
 
@@ -38,6 +43,22 @@ class IlSpyFrontendSettings : PersistentStateComponent<IlSpyFrontendSettings.Sta
         get() = IlSpyMode.fromBackendName(internalState.mode)
         set(value) {
             internalState.mode = value.backendName
+        }
+
+    /**
+     * Master on/off for the plugin. When false, the C# external sources
+     * provider short-circuits both IsApplicableForNavigation and
+     * IsPreferredForNavigation, so Rider's default navigation behavior
+     * takes over with no ILSpy intercept. The status bar widget exposes
+     * this as a single-click "Off" toggle.
+     *
+     * Pushed to the backend via [IlSpyProtocolHost.setEnabled] / the
+     * initial push during service init.
+     */
+    var enabled: Boolean
+        get() = internalState.enabled
+        set(value) {
+            internalState.enabled = value
         }
 
     val search: IlSpySearchSettings

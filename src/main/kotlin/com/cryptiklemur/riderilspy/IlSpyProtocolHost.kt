@@ -66,6 +66,30 @@ class IlSpyProtocolHost(private val project: Project) : LifetimedService() {
     }
 
     /**
+     * Push the current enabled flag to the backend. Same threading +
+     * unbound-protocol caveats as [setMode] — see that method for the
+     * rationale on single-try/catch (no retry: post-init the binding race
+     * is already settled by [pushInitialEnabledWithRetry]).
+     */
+    fun setEnabled(enabled: Boolean) {
+        try {
+            setEnabledOnEdt(enabled)
+        } catch (error: Exception) {
+            LOG.info("Deferred ILSpy enabled push (protocol not bound yet)", error)
+        }
+    }
+
+    private fun setEnabledOnEdt(enabled: Boolean) {
+        val app = ApplicationManager.getApplication()
+        runOnEdt(
+            isDispatchThread = { app.isDispatchThread },
+            invokeAndWait = { app.invokeAndWait(it) },
+        ) {
+            project.solution.riderIlSpyModel.enabled.set(enabled)
+        }
+    }
+
+    /**
      * Subscribe to ready-tick notifications from the backend. [onReady] runs
      * for every fire that arrives during [lifetime] and is automatically
      * unsubscribed when the lifetime ends.
@@ -86,13 +110,14 @@ class IlSpyProtocolHost(private val project: Project) : LifetimedService() {
     }
 
     init {
-        // Push the persisted mode as soon as the protocol is bound so the
-        // backend doesn't start with a stale default. Solution-bind ordering
-        // is not guaranteed at service init, so retry with backoff against the
-        // unbound-protocol race rather than fire-and-forget exactly once.
+        // Push the persisted mode AND enabled flag as soon as the protocol
+        // is bound so the backend doesn't start with stale defaults.
+        // Solution-bind ordering is not guaranteed at service init, so each
+        // push retries with backoff against the unbound-protocol race.
         ApplicationManager.getApplication().executeOnPooledThread {
-            val mode = IlSpyFrontendSettings.getInstance().mode
-            pushInitialModeWithRetry(mode)
+            val settings = IlSpyFrontendSettings.getInstance()
+            pushInitialModeWithRetry(settings.mode)
+            pushInitialEnabledWithRetry(settings.enabled)
         }
     }
 
@@ -117,6 +142,27 @@ class IlSpyProtocolHost(private val project: Project) : LifetimedService() {
         }
         if (!ok && lastError != null && !project.isDisposed) {
             LOG.info("Gave up initial ILSpy mode push after ${initialModePushSchedule.size} attempts (protocol still unbound)", lastError)
+        }
+    }
+
+    private fun pushInitialEnabledWithRetry(enabled: Boolean) {
+        // Same protocol-binding race and retry policy as
+        // [pushInitialModeWithRetry] — share the same schedule for parity.
+        var lastError: Exception? = null
+        val ok = attemptWithBackoff(
+            schedule = initialModePushSchedule,
+            isDisposed = { project.isDisposed },
+        ) {
+            try {
+                setEnabledOnEdt(enabled)
+                true
+            } catch (error: Exception) {
+                lastError = error
+                false
+            }
+        }
+        if (!ok && lastError != null && !project.isDisposed) {
+            LOG.info("Gave up initial ILSpy enabled push after ${initialModePushSchedule.size} attempts (protocol still unbound)", lastError)
         }
     }
 

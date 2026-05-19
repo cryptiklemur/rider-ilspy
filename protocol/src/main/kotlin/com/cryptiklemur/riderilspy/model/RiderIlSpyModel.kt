@@ -56,6 +56,13 @@ object RiderIlSpyModel : Ext(SolutionModel.Solution) {
         }
 
         property("mode", string)
+        // Frontend writes this when the user toggles the status-bar widget
+        // between "Off" and any mode. Backend reads it to short-circuit
+        // IsApplicableForNavigation and IsPreferredForNavigation when false,
+        // so Rider's default navigation behavior takes over with no ILSpy
+        // intercept. Persisted on the frontend side via IlSpyFrontendSettings;
+        // not stored separately on the backend.
+        property("enabled", bool)
         signal("readyTick", long)
         call("saveAsProject", saveAsProjectRequest, saveAsProjectResponse)
 

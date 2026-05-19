@@ -20,6 +20,7 @@ import kotlin.jvm.JvmStatic
  */
 class RiderIlSpyModel private constructor(
     private val _mode: RdOptionalProperty<String>,
+    private val _enabled: RdOptionalProperty<Boolean>,
     private val _readyTick: RdSignal<Long>,
     private val _saveAsProject: RdCall<SaveAsProjectRequest, SaveAsProjectResponse>,
     private val _searchIndexState: RdOptionalProperty<SearchIndexState>,
@@ -49,7 +50,7 @@ class RiderIlSpyModel private constructor(
         
         
         
-        const val serializationHash = -6103727641922359333L
+        const val serializationHash = -956756264648943532L
         
     }
     override val serializersOwner: ISerializersOwner get() = RiderIlSpyModel
@@ -57,6 +58,7 @@ class RiderIlSpyModel private constructor(
     
     //fields
     val mode: IOptProperty<String> get() = _mode
+    val enabled: IOptProperty<Boolean> get() = _enabled
     val readyTick: ISignal<Long> get() = _readyTick
     val saveAsProject: IRdCall<SaveAsProjectRequest, SaveAsProjectResponse> get() = _saveAsProject
     val searchIndexState: IOptProperty<SearchIndexState> get() = _searchIndexState
@@ -69,11 +71,13 @@ class RiderIlSpyModel private constructor(
     //initializer
     init {
         _mode.optimizeNested = true
+        _enabled.optimizeNested = true
         _searchIndexState.optimizeNested = true
     }
     
     init {
         bindableChildren.add("mode" to _mode)
+        bindableChildren.add("enabled" to _enabled)
         bindableChildren.add("readyTick" to _readyTick)
         bindableChildren.add("saveAsProject" to _saveAsProject)
         bindableChildren.add("searchIndexState" to _searchIndexState)
@@ -88,6 +92,7 @@ class RiderIlSpyModel private constructor(
     internal constructor(
     ) : this(
         RdOptionalProperty<String>(FrameworkMarshallers.String),
+        RdOptionalProperty<Boolean>(FrameworkMarshallers.Bool),
         RdSignal<Long>(FrameworkMarshallers.Long),
         RdCall<SaveAsProjectRequest, SaveAsProjectResponse>(SaveAsProjectRequest, SaveAsProjectResponse),
         RdOptionalProperty<SearchIndexState>(SearchIndexState),
@@ -105,6 +110,7 @@ class RiderIlSpyModel private constructor(
         printer.println("RiderIlSpyModel (")
         printer.indent {
             print("mode = "); _mode.print(printer); println()
+            print("enabled = "); _enabled.print(printer); println()
             print("readyTick = "); _readyTick.print(printer); println()
             print("saveAsProject = "); _saveAsProject.print(printer); println()
             print("searchIndexState = "); _searchIndexState.print(printer); println()
@@ -120,6 +126,7 @@ class RiderIlSpyModel private constructor(
     override fun deepClone(): RiderIlSpyModel   {
         return RiderIlSpyModel(
             _mode.deepClonePolymorphic(),
+            _enabled.deepClonePolymorphic(),
             _readyTick.deepClonePolymorphic(),
             _saveAsProject.deepClonePolymorphic(),
             _searchIndexState.deepClonePolymorphic(),
@@ -139,7 +146,7 @@ val com.jetbrains.rd.ide.model.Solution.riderIlSpyModel get() = getOrCreateExten
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:114]
+ * #### Generated from [RiderIlSpyModel.kt:121]
  */
 data class NavResolution (
     val success: Boolean,
@@ -226,7 +233,7 @@ data class NavResolution (
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:83]
+ * #### Generated from [RiderIlSpyModel.kt:90]
  */
 data class NavTarget (
     val kind: String,
@@ -469,7 +476,7 @@ data class SaveAsProjectResponse (
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:62]
+ * #### Generated from [RiderIlSpyModel.kt:69]
  */
 data class SearchIndexState (
     val phase: String,
@@ -556,7 +563,7 @@ data class SearchIndexState (
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:72]
+ * #### Generated from [RiderIlSpyModel.kt:79]
  */
 data class SearchRequest (
     val searchId: String,
@@ -661,7 +668,7 @@ data class SearchRequest (
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:101]
+ * #### Generated from [RiderIlSpyModel.kt:108]
  */
 data class SearchResultBatch (
     val searchId: String,
@@ -742,7 +749,7 @@ data class SearchResultBatch (
 
 
 /**
- * #### Generated from [RiderIlSpyModel.kt:92]
+ * #### Generated from [RiderIlSpyModel.kt:99]
  */
 data class SearchResultRow (
     val assemblyName: String,

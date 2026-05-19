@@ -49,6 +49,13 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     private readonly IlSpyRequestSettingsBuilder mySettingsBuilder;
     private readonly RiderIlSpyModel myRiderIlSpyModel;
     private readonly ModeChangeRedecompiler myModeChangeRedecompiler;
+    // Mirrors the frontend's master on/off flag, pushed from
+    // IlSpyProtocolHost via the rd `Enabled` property. Default true so the
+    // window between solution open and the first rd push matches the legacy
+    // "enabled" default rather than silently disabling the provider on
+    // every solution open. Volatile because IsIlSpyEnabled is called from
+    // navigation threads while Advise runs on the protocol scheduler.
+    private volatile bool myEnabled = true;
 
     public IlSpyExternalSourcesProvider(
         Lifetime lifetime,
@@ -76,6 +83,12 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             ourLogger.Verbose,
             ourLogger.Error);
         myRiderIlSpyModel.Mode.Advise(lifetime, myModeChangeRedecompiler.OnModeChanged);
+        // Track the frontend's enabled flag so IsApplicableForNavigation /
+        // IsPreferredForNavigation can short-circuit the entire provider
+        // when the user has toggled ILSpy off from the status bar widget.
+        // No re-decompile / readyTick needed on enable-change: the next
+        // navigation request just re-evaluates against the new flag.
+        myRiderIlSpyModel.Enabled.Advise(lifetime, value => myEnabled = value);
     }
 
     public string PresentableShortName => "ILSpy";
@@ -106,10 +119,14 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             mySettings.GetValue((IlSpySettings s) => s.DeferToRiderSources));
     }
 
-    private bool IsIlSpyEnabled()
-    {
-        return mySettings.GetValue((IlSpySettings s) => s.Enabled);
-    }
+    // Source of truth for the master on/off flag is the Kotlin frontend's
+    // IlSpyFrontendSettings, mirrored into myEnabled via the rd Enabled
+    // property. Reading the field (instead of mySettings.GetValue) lets the
+    // status-bar widget's "Off" toggle take effect immediately on the next
+    // navigation without a settings-store write round-trip. The window
+    // between solution open and the first rd push is covered by the field's
+    // default-true initializer.
+    private bool IsIlSpyEnabled() => myEnabled;
 
     public ExternalSourcesMapping? MapFileToAssembly(FileSystemPath file)
     {
