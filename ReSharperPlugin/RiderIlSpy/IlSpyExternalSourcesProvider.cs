@@ -95,7 +95,15 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
 
     public bool IsPreferredForNavigation()
     {
-        return IsIlSpyEnabled();
+        // IlSpyNavigationPreference.Decide is a pure helper kept outside this
+        // class so the logic is unit-testable without the IExternalSourcesProvider
+        // type graph. Returning false (when DeferToRiderSources is on) lets
+        // Rider's own preferred-source providers — downloaded source, SourceLink,
+        // Microsoft Reference Source — win for types that ship real source.
+        // ILSpy remains the fallback via IsApplicableForNavigation.
+        return IlSpyNavigationPreference.Decide(
+            IsIlSpyEnabled(),
+            mySettings.GetValue((IlSpySettings s) => s.DeferToRiderSources));
     }
 
     private bool IsIlSpyEnabled()

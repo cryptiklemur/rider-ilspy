@@ -88,4 +88,14 @@ public class IlSpySettings
     // host is unreachable we want to fall back to local decompilation fast.
     [SettingsEntry(5, "SourceLink fetch timeout (seconds)")]
     public int SourceLinkTimeoutSeconds;
+
+    // When true, the provider returns IsPreferredForNavigation=false so
+    // Rider's own preferred-source providers (downloaded source server,
+    // Microsoft Reference Source, embedded SourceLink) can win for BCL and
+    // other library types that ship real source. ILSpy stays applicable as
+    // the fallback when no other provider claims the navigation. Default
+    // true matches the user expectation that "go to declaration" on a BCL
+    // type opens real source with xmldocs — not decompiled output.
+    [SettingsEntry(true, "Defer to Rider's downloaded sources / SourceLink / Microsoft Reference Source when available (uncheck to always prefer ILSpy)")]
+    public bool DeferToRiderSources;
 }
