@@ -10,6 +10,7 @@ using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.CSharp;
 using ICSharpCode.Decompiler.CSharp.ProjectDecompiler;
 using ICSharpCode.Decompiler.Disassembler;
+using ICSharpCode.Decompiler.Documentation;
 using ICSharpCode.Decompiler.Metadata;
 using ICSharpCode.Decompiler.TypeSystem;
 using JetBrains.Application;
@@ -240,6 +241,19 @@ public class IlSpyDecompiler
         using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
         UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, settings, extraSearchDirs);
         CSharpDecompiler decompiler = new CSharpDecompiler(module, resolver, settings);
+        // Inject xmldoc coverage: sidecar (NuGet, Mono, .NETFx ref assemblies)
+        // plus the parallel .NET ref-pack tree for shared-runtime impl assemblies.
+        // CSharpDecompiler honors a manually-assigned DocumentationProvider when
+        // settings.ShowXmlDocumentation is true and emits the resolved xmldoc
+        // text as `///` comments above each member. Honoring the user's
+        // ShowXmlDocumentation toggle means we skip the I/O entirely when the
+        // setting is off — Directory.GetFiles on a ~100-xml ref pack isn't
+        // free.
+        if (settings.ShowXmlDocumentation)
+        {
+            IDocumentationProvider? docProvider = IlSpyCompositeDocumentationProvider.BuildForAssembly(assemblyPath);
+            if (docProvider != null) decompiler.DocumentationProvider = docProvider;
+        }
 
         FullTypeName ftn;
         try { ftn = new FullTypeName(typeFullName); }

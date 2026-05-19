@@ -120,18 +120,6 @@ public class IlSpyExternalSourcesProviderHelpersTests
     }
 
     [Fact]
-    public void XmlDocPathOrEmpty_changes_extension_to_xml()
-    {
-        Assert.Equal("/tmp/MyLib.xml", IlSpyExternalSourcesProviderHelpers.XmlDocPathOrEmpty("/tmp/MyLib.dll"));
-    }
-
-    [Fact]
-    public void XmlDocPathOrEmpty_returns_empty_for_empty_input()
-    {
-        Assert.Equal(string.Empty, IlSpyExternalSourcesProviderHelpers.XmlDocPathOrEmpty(string.Empty));
-    }
-
-    [Fact]
     public void GetDecompilerVersion_returns_non_empty_version()
     {
         // ICSharpCode.Decompiler 8.2 is referenced — version must resolve to
@@ -176,6 +164,41 @@ public class IlSpyExternalSourcesProviderHelpersTests
         Assert.Contains("// XML documentation location:", banner);
         Assert.Contains("// Extra search dirs: (none)", banner);
         Assert.DoesNotContain("// Assembly:", banner); // meta-only row is absent when meta == null
+        // Ref-pack line is conditional and shouldn't appear for a non-shared-runtime
+        // dummy path like /tmp/MyLib.dll.
+        Assert.DoesNotContain("// XML documentation ref pack:", banner);
+    }
+
+    [Fact]
+    public void BuildDiagnosticBanner_emits_ref_pack_row_for_dotnet_shared_runtime_path()
+    {
+        // Stand up a synthetic .NET shared-runtime + ref-pack layout in a
+        // temp directory and assert the banner picks up the parallel ref
+        // pack. Using real filesystem (rather than a mock) because the
+        // banner builder is intentionally I/O-bound — it counts xml files
+        // on disk to emit the "(N files)" suffix.
+        string root = Path.Combine(Path.GetTempPath(), "rider-ilspy-banner-test-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string implDir = Path.Combine(root, "shared", "Microsoft.NETCore.App", "10.0.4");
+            string refTfmDir = Path.Combine(root, "packs", "Microsoft.NETCore.App.Ref", "10.0.4", "ref", "net10.0");
+            Directory.CreateDirectory(implDir);
+            Directory.CreateDirectory(refTfmDir);
+            File.WriteAllText(Path.Combine(refTfmDir, "System.Runtime.xml"), "<doc/>");
+            File.WriteAllText(Path.Combine(refTfmDir, "System.Numerics.Vectors.xml"), "<doc/>");
+            string implPath = Path.Combine(implDir, "System.Private.CoreLib.dll");
+            File.WriteAllText(implPath, ""); // banner reads xml count only — empty dll is fine
+
+            BannerContext ctx = new BannerContext(Meta: null, AssemblyPath: implPath, TypeFullName: "MyNs.MyType", Mode: IlSpyOutputMode.CSharp, ExtraSearchDirs: new string[] { });
+            string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(ctx, sourceLinkOutcome: null);
+
+            Assert.Contains("// XML documentation ref pack:", banner);
+            Assert.Contains("(2 files)", banner);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* best-effort cleanup */ }
+        }
     }
 
     // ReadAssemblyBannerMetadata regression: previously untested in unit pipeline.

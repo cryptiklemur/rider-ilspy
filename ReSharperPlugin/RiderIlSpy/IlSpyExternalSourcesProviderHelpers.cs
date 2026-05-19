@@ -185,13 +185,6 @@ internal static class IlSpyExternalSourcesProviderHelpers
     // failure path returns a sentinel ("", "unknown") that the banner already
     // renders meaningfully — losing version/xml-path enrichment is non-fatal
     // diagnostic noise, not data loss.
-    public static string XmlDocPathOrEmpty(string assemblyPath)
-    {
-        if (string.IsNullOrEmpty(assemblyPath)) return string.Empty;
-        try { return Path.ChangeExtension(assemblyPath, ".xml"); }
-        catch { /* non-fatal: banner degrades gracefully to "(none)" */ return string.Empty; }
-    }
-
     public static string GetDecompilerVersion()
     {
         try
@@ -289,8 +282,15 @@ internal static class IlSpyExternalSourcesProviderHelpers
     // diagnosing assembly resolution).
     public static string BuildDiagnosticBanner(BannerContext ctx, SourceLinkOutcome? sourceLinkOutcome)
     {
-        string xmlDocPath = XmlDocPathOrEmpty(ctx.AssemblyPath);
-        bool xmlExists = !string.IsNullOrEmpty(xmlDocPath) && File.Exists(xmlDocPath);
+        string? sidecar = IlSpyXmlDocResolver.GetSidecarXmlDocPath(ctx.AssemblyPath);
+        bool sidecarExists = !string.IsNullOrEmpty(sidecar) && File.Exists(sidecar);
+        string? refPackDir = IlSpyXmlDocResolver.GetRefPackXmlDocDirectory(ctx.AssemblyPath);
+        int refPackFileCount = 0;
+        if (refPackDir != null && Directory.Exists(refPackDir))
+        {
+            try { refPackFileCount = Directory.GetFiles(refPackDir, "*.xml", SearchOption.AllDirectories).Length; }
+            catch { /* enumeration failure is non-fatal; banner just omits the ref-pack line */ }
+        }
 
         StringBuilder sb = new StringBuilder(512);
         sb.Append("// Decompiled with RiderIlSpy (ICSharpCode.Decompiler ").Append(GetDecompilerVersion()).Append(")\n");
@@ -306,7 +306,17 @@ internal static class IlSpyExternalSourcesProviderHelpers
             sb.Append("// File size: ").Append(ctx.Meta.FileSize.ToString("N0", CultureInfo.InvariantCulture)).Append(" bytes\n");
         }
         sb.Append("// Assembly location: ").Append(RedactHome(ctx.AssemblyPath)).Append('\n');
-        sb.Append("// XML documentation location: ").Append(xmlExists ? RedactHome(xmlDocPath) : "(none)").Append('\n');
+        sb.Append("// XML documentation location: ").Append(sidecarExists ? RedactHome(sidecar!) : "(none)").Append('\n');
+        // Ref-pack line is conditional: only .NET shared-runtime impl assemblies
+        // get a hit, so emitting "(none)" here for every NuGet decompile would
+        // be visual noise. Single-noun "file" / "files" pluralization just
+        // because the count can be 1 (yes, really — a ref pack with one xml).
+        if (refPackFileCount > 0)
+        {
+            sb.Append("// XML documentation ref pack: ").Append(RedactHome(refPackDir!))
+              .Append(" (").Append(refPackFileCount).Append(refPackFileCount == 1 ? " file)" : " files)")
+              .Append('\n');
+        }
         sb.Append("// Mode: ").Append(ctx.Mode).Append('\n');
         sb.Append("// Extra search dirs: ")
           .Append(ctx.ExtraSearchDirs.Count == 0 ? "(none)" : string.Join(", ", ctx.ExtraSearchDirs.Select(RedactHome)))

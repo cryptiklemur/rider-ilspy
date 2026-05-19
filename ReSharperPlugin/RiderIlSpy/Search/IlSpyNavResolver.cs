@@ -12,6 +12,7 @@ using ICSharpCode.Decompiler.CSharp;
 using ICSharpCode.Decompiler.CSharp.OutputVisitor;
 using ICSharpCode.Decompiler.CSharp.Syntax;
 using ICSharpCode.Decompiler.Disassembler;
+using ICSharpCode.Decompiler.Documentation;
 using ICSharpCode.Decompiler.IL;
 using ICSharpCode.Decompiler.Metadata;
 using ICSharpCode.Decompiler.TypeSystem;
@@ -102,6 +103,13 @@ public sealed class IlSpyNavResolver
         UniversalAssemblyResolver resolver = new(assemblyPath, throwOnError: false, tfm);
         DecompilerSettings settings = new() { ShowXmlDocumentation = true };
         CSharpDecompiler decompiler = new(module, resolver, settings);
+        // Mirror IlSpyDecompiler.DecompileToCSharp: when ShowXmlDocumentation
+        // is on, attach the composite xmldoc provider so search-driven
+        // navigation gets the same `///` comments as the regular decompile
+        // path. Without this, search-result decompiles silently drop xmldocs
+        // even on assemblies that ship them.
+        IDocumentationProvider? docProvider = IlSpyCompositeDocumentationProvider.BuildForAssembly(assemblyPath);
+        if (docProvider != null) decompiler.DocumentationProvider = docProvider;
 
         ITypeDefinition? typeDef = decompiler.TypeSystem.MainModule.GetDefinition(typeHandle);
         if (typeDef == null)
