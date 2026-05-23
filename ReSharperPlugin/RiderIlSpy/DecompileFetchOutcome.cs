@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace RiderIlSpy;
 
 /// <summary>
@@ -27,9 +29,18 @@ namespace RiderIlSpy;
 /// failure output.</param>
 /// <param name="FailureReason">One-line summary of the decompile failure
 /// (type + message). Null when <see cref="Success"/> is true.</param>
+/// <param name="Methods">Per-method sequence points carried through from the
+/// underlying <see cref="DecompileResult"/>, used by the provider to build the
+/// <c>DebugData</c> the debugger needs to bind breakpoints in decompiled
+/// source. Always empty for SourceLink hits (real PDB data flows through the
+/// platform's normal pipeline) and for failure outcomes.</param>
 public sealed record DecompileFetchOutcome(
     string Content,
     bool FromSourceLink,
     SourceLinkOutcome SourceLinkOutcome,
     bool Success,
-    string? FailureReason);
+    string? FailureReason,
+    IReadOnlyList<MethodSequencePoints> Methods)
+{
+    public static readonly IReadOnlyList<MethodSequencePoints> EmptyMethods = [];
+}

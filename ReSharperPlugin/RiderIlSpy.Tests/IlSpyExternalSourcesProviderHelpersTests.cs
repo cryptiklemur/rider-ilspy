@@ -563,4 +563,144 @@ public class IlSpyExternalSourcesProviderHelpersTests
         Assert.Equal("Type.cs", fields.FileName);
         Assert.Equal(IlSpyOutputMode.CSharpWithIL, fields.Mode);
     }
+
+    [Fact]
+    public void CountBannerLines_NullOrEmpty_ReturnsZero()
+    {
+        Assert.Equal(0, IlSpyExternalSourcesProviderHelpers.CountBannerLines(null));
+        Assert.Equal(0, IlSpyExternalSourcesProviderHelpers.CountBannerLines(string.Empty));
+    }
+
+    [Fact]
+    public void CountBannerLines_NoNewlines_ReturnsZero()
+    {
+        Assert.Equal(0, IlSpyExternalSourcesProviderHelpers.CountBannerLines("// no newline at end"));
+    }
+
+    [Fact]
+    public void CountBannerLines_CountsEveryNewline()
+    {
+        string banner = "// line 1\n// line 2\n// line 3\n\n";
+        Assert.Equal(4, IlSpyExternalSourcesProviderHelpers.CountBannerLines(banner));
+    }
+
+    [Fact]
+    public void CountBannerLines_IgnoresCarriageReturns()
+    {
+        Assert.Equal(2, IlSpyExternalSourcesProviderHelpers.CountBannerLines("a\r\nb\r\n"));
+    }
+
+    [Fact]
+    public void OffsetSequencePoints_ZeroOffset_ReturnsSameReference()
+    {
+        IReadOnlyList<MethodSequencePoints> methods =
+        [
+            new MethodSequencePoints(0x06000001, 0, 10,
+            [
+                new IlSpySequencePoint(0, 1, 5, 1, 10, IsHidden: false),
+            ]),
+        ];
+
+        IReadOnlyList<MethodSequencePoints> result =
+            IlSpyExternalSourcesProviderHelpers.OffsetSequencePointsByBannerLines(methods, bannerLineCount: 0);
+
+        Assert.Same(methods, result);
+    }
+
+    [Fact]
+    public void OffsetSequencePoints_NegativeOffset_ReturnsSameReference()
+    {
+        IReadOnlyList<MethodSequencePoints> methods =
+        [
+            new MethodSequencePoints(0x06000001, 0, 10,
+            [
+                new IlSpySequencePoint(0, 1, 5, 1, 10, IsHidden: false),
+            ]),
+        ];
+
+        IReadOnlyList<MethodSequencePoints> result =
+            IlSpyExternalSourcesProviderHelpers.OffsetSequencePointsByBannerLines(methods, bannerLineCount: -3);
+
+        Assert.Same(methods, result);
+    }
+
+    [Fact]
+    public void OffsetSequencePoints_EmptyInput_ReturnsSameReference()
+    {
+        IReadOnlyList<MethodSequencePoints> methods = [];
+        IReadOnlyList<MethodSequencePoints> result =
+            IlSpyExternalSourcesProviderHelpers.OffsetSequencePointsByBannerLines(methods, bannerLineCount: 5);
+        Assert.Same(methods, result);
+    }
+
+    [Fact]
+    public void OffsetSequencePoints_ShiftsStartAndEndLineOnly()
+    {
+        IReadOnlyList<MethodSequencePoints> methods =
+        [
+            new MethodSequencePoints(0x06000001, 0x11000002, 42,
+            [
+                new IlSpySequencePoint(IlOffset: 0, StartLine: 1, StartColumn: 5, EndLine: 1, EndColumn: 10, IsHidden: false),
+                new IlSpySequencePoint(IlOffset: 12, StartLine: 3, StartColumn: 1, EndLine: 5, EndColumn: 2, IsHidden: false),
+            ]),
+        ];
+
+        IReadOnlyList<MethodSequencePoints> result =
+            IlSpyExternalSourcesProviderHelpers.OffsetSequencePointsByBannerLines(methods, bannerLineCount: 12);
+
+        Assert.Single(result);
+        MethodSequencePoints shiftedMethod = result[0];
+        Assert.Equal(0x06000001, shiftedMethod.MethodToken);
+        Assert.Equal(0x11000002, shiftedMethod.LocalSignatureToken);
+        Assert.Equal(42, shiftedMethod.CodeLength);
+        Assert.Equal(2, shiftedMethod.Points.Count);
+
+        IlSpySequencePoint firstPoint = shiftedMethod.Points[0];
+        Assert.Equal(0, firstPoint.IlOffset);
+        Assert.Equal(13, firstPoint.StartLine);
+        Assert.Equal(5, firstPoint.StartColumn);
+        Assert.Equal(13, firstPoint.EndLine);
+        Assert.Equal(10, firstPoint.EndColumn);
+        Assert.False(firstPoint.IsHidden);
+
+        IlSpySequencePoint secondPoint = shiftedMethod.Points[1];
+        Assert.Equal(12, secondPoint.IlOffset);
+        Assert.Equal(15, secondPoint.StartLine);
+        Assert.Equal(1, secondPoint.StartColumn);
+        Assert.Equal(17, secondPoint.EndLine);
+        Assert.Equal(2, secondPoint.EndColumn);
+    }
+
+    [Fact]
+    public void OffsetSequencePoints_HiddenPointsPassThroughUntouched()
+    {
+        IlSpySequencePoint hiddenPoint = new IlSpySequencePoint(
+            IlOffset: 7, StartLine: 0xFEEFEE, StartColumn: 0, EndLine: 0xFEEFEE, EndColumn: 0, IsHidden: true);
+
+        IReadOnlyList<MethodSequencePoints> methods =
+        [
+            new MethodSequencePoints(0x06000003, 0, 5,
+            [
+                hiddenPoint,
+                new IlSpySequencePoint(IlOffset: 9, StartLine: 2, StartColumn: 1, EndLine: 2, EndColumn: 3, IsHidden: false),
+            ]),
+        ];
+
+        IReadOnlyList<MethodSequencePoints> result =
+            IlSpyExternalSourcesProviderHelpers.OffsetSequencePointsByBannerLines(methods, bannerLineCount: 7);
+
+        Assert.Equal(hiddenPoint, result[0].Points[0]);
+        Assert.Equal(9, result[0].Points[1].StartLine);
+        Assert.Equal(9, result[0].Points[1].EndLine);
+    }
+
+    [Theory]
+    [InlineData(true, false, true)]   // disable edge: evict so dotPeek re-decompiles fresh
+    [InlineData(true, true, false)]   // still enabled (incl. initial advise replay): keep cache
+    [InlineData(false, true, false)]  // re-enable: our provider wins navigation again, nothing to evict
+    [InlineData(false, false, false)] // still disabled: already evicted on the earlier edge
+    public void ShouldEvictOnEnabledChange_only_on_enable_to_disable_edge(bool wasEnabled, bool nowEnabled, bool expected)
+    {
+        Assert.Equal(expected, IlSpyExternalSourcesProviderHelpers.ShouldEvictOnEnabledChange(wasEnabled, nowEnabled));
+    }
 }

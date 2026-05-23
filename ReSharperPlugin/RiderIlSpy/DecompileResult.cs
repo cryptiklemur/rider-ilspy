@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace RiderIlSpy;
 
 /// <summary>
@@ -18,9 +20,19 @@ namespace RiderIlSpy;
 /// failed (e.g. <c>"ArgumentException: fieldCount"</c>). Null on
 /// <see cref="Success"/>; otherwise a one-line summary suitable for log entries
 /// or telemetry without parsing the full <see cref="Content"/> comment block.</param>
-public sealed record DecompileResult(string Content, bool Success, string? FailureReason)
+/// <param name="Methods">Per-method sequence points captured during the C#
+/// decompile pass. Empty for IL / Mixed disassembly, comment-only failures, and
+/// SourceLink (handled out-of-band); populated only when ICSharpCode.Decompiler
+/// produced real debug info for the type. Consumed by the provider layer to
+/// build JetBrains <c>DebugData</c> so the debugger can bind breakpoints in
+/// decompiled source.</param>
+public sealed record DecompileResult(string Content, bool Success, string? FailureReason, IReadOnlyList<MethodSequencePoints> Methods)
 {
-    public static DecompileResult Ok(string content) => new DecompileResult(content, Success: true, FailureReason: null);
+    private static readonly IReadOnlyList<MethodSequencePoints> EmptyMethods = [];
 
-    public static DecompileResult Fail(string content, string reason) => new DecompileResult(content, Success: false, FailureReason: reason);
+    public static DecompileResult Ok(string content) => new DecompileResult(content, Success: true, FailureReason: null, Methods: EmptyMethods);
+
+    public static DecompileResult Ok(string content, IReadOnlyList<MethodSequencePoints> methods) => new DecompileResult(content, Success: true, FailureReason: null, Methods: methods);
+
+    public static DecompileResult Fail(string content, string reason) => new DecompileResult(content, Success: false, FailureReason: reason, Methods: EmptyMethods);
 }

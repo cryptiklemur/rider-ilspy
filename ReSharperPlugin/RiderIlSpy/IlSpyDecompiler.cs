@@ -3,14 +3,18 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text;
 using System.Threading;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.CSharp;
+using ICSharpCode.Decompiler.CSharp.OutputVisitor;
 using ICSharpCode.Decompiler.CSharp.ProjectDecompiler;
+using ICSharpCode.Decompiler.CSharp.Syntax;
 using ICSharpCode.Decompiler.Disassembler;
 using ICSharpCode.Decompiler.Documentation;
+using ICSharpCode.Decompiler.IL;
 using ICSharpCode.Decompiler.Metadata;
 using ICSharpCode.Decompiler.TypeSystem;
 using JetBrains.Application;
@@ -50,7 +54,7 @@ public class IlSpyDecompiler
     {
         try
         {
-            return DecompileResult.Ok(DecompileForMode(assemblyPath, typeFullName, settings, extraSearchDirs, mode));
+            return DecompileForMode(assemblyPath, typeFullName, settings, extraSearchDirs, mode);
         }
         catch (ArgumentException ex) when (mode != IlSpyOutputMode.IL && DecompilerTypeSystemPatch.IsTwoComponentTfmVersionBug(ex))
         {
@@ -72,7 +76,7 @@ public class IlSpyDecompiler
             return FallBackToIl(assemblyPath, typeFullName, settings, extraSearchDirs, original, null);
         try
         {
-            return DecompileResult.Ok(DecompileForMode(assemblyPath, typeFullName, settings, extraSearchDirs, mode));
+            return DecompileForMode(assemblyPath, typeFullName, settings, extraSearchDirs, mode);
         }
         catch (Exception retryEx)
         {
@@ -80,12 +84,16 @@ public class IlSpyDecompiler
         }
     }
 
-    private string DecompileForMode(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs, IlSpyOutputMode mode) =>
+    // Returns DecompileResult (not string) so the C# path can thread per-method
+    // sequence points alongside the text via DecompileResult.Methods. IL / Mixed
+    // disassembly paths have no source-line-to-IL-offset mapping (the output
+    // *is* IL), so they return DecompileResult.Ok(text) with empty Methods.
+    private DecompileResult DecompileForMode(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs, IlSpyOutputMode mode) =>
         mode switch
         {
-            IlSpyOutputMode.IL => DisassembleToIl(assemblyPath, typeFullName, settings, extraSearchDirs),
-            IlSpyOutputMode.CSharpWithIL => DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs),
-            _ => DecompileToCSharp(assemblyPath, typeFullName, settings, extraSearchDirs),
+            IlSpyOutputMode.IL => DecompileResult.Ok(DisassembleToIl(assemblyPath, typeFullName, settings, extraSearchDirs)),
+            IlSpyOutputMode.CSharpWithIL => DecompileResult.Ok(DisassembleMixed(assemblyPath, typeFullName, settings, extraSearchDirs)),
+            _ => DecompileCSharpWithSequencePoints(assemblyPath, typeFullName, settings, extraSearchDirs),
         };
 
 
@@ -236,7 +244,13 @@ public class IlSpyDecompiler
         }
     }
 
-    private static string DecompileToCSharp(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs)
+    // The C# decompile path: produces text AND per-method sequence points from
+    // the same syntax-tree pass. Replaces the prior DecompileTypeAsString
+    // single-shot so the provider can hand JetBrains the (ilOffset → source
+    // line/col) mapping the debugger needs to bind breakpoints in decompiled
+    // source — the IL / Mixed siblings have no such mapping (the output IS IL)
+    // and stay text-only.
+    private static DecompileResult DecompileCSharpWithSequencePoints(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs)
     {
         using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
         UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, settings, extraSearchDirs);
@@ -257,11 +271,78 @@ public class IlSpyDecompiler
 
         FullTypeName ftn;
         try { ftn = new FullTypeName(typeFullName); }
-        catch { return "// invalid type name: " + typeFullName; }
+        catch { return DecompileResult.Ok("// invalid type name: " + typeFullName); }
 
         ITypeDefinition? type = decompiler.TypeSystem.MainModule.GetTypeDefinition(ftn);
-        if (type == null) return "// type not found: " + typeFullName;
-        return decompiler.DecompileTypeAsString(ftn);
+        if (type == null) return DecompileResult.Ok("// type not found: " + typeFullName);
+
+        // SyntaxTreeToString MUST run before CreateSequencePoints — the
+        // WrapInWriterThatSetsLocationsInAST tokenwriter is what populates
+        // node.StartLocation / EndLocation, and CreateSequencePoints reads those
+        // locations. ICSharpCode.Decompiler's own CreateSequencePoints doc-comment
+        // is explicit: "only works correctly when the nodes in the syntax tree
+        // have line/column information." This pair mirrors PortablePdbWriter's
+        // canonical ordering.
+        SyntaxTree tree = decompiler.DecompileType(ftn);
+        string content = SyntaxTreeToString(tree, settings);
+        IReadOnlyList<MethodSequencePoints> methods = ExtractSequencePoints(decompiler, tree, module);
+        return DecompileResult.Ok(content, methods);
+    }
+
+    // Replicates ICSharpCode.Decompiler.DebugInfo.PortablePdbWriter.SyntaxTreeToString
+    // verbatim — that path is private inside PortablePdbWriter so we can't reuse it,
+    // but the recipe is small (5 lines) and stable across ILSpy versions.
+    private static string SyntaxTreeToString(SyntaxTree syntaxTree, DecompilerSettings settings)
+    {
+        using StringWriter writer = new StringWriter();
+        TokenWriter tokenWriter = new TextWriterTokenWriter(writer);
+        tokenWriter = TokenWriter.WrapInWriterThatSetsLocationsInAST(tokenWriter);
+        syntaxTree.AcceptVisitor(new CSharpOutputVisitor(tokenWriter, settings.CSharpFormattingOptions));
+        return writer.ToString();
+    }
+
+    // Translates ICSharpCode.Decompiler.DebugInfo.SequencePoint into the plain
+    // IlSpySequencePoint record so downstream helpers (banner-line offset,
+    // JetBrains DebugData construction) can stay SDK-free. Iterator / async
+    // state-machine MoveNextMethod is preferred over the declared method so SPs
+    // land on the IL the debugger is actually stepping, matching the
+    // PortablePdbWriter recipe. Code length + local-signature token come from
+    // the PE method body and feed JetBrains DebugData.CreateMethod's contract.
+    private static IReadOnlyList<MethodSequencePoints> ExtractSequencePoints(CSharpDecompiler decompiler, SyntaxTree tree, PEFile module)
+    {
+        Dictionary<ILFunction, List<ICSharpCode.Decompiler.DebugInfo.SequencePoint>> map = decompiler.CreateSequencePoints(tree);
+        if (map.Count == 0) return [];
+
+        MetadataReader reader = module.Metadata;
+        List<MethodSequencePoints> result = new List<MethodSequencePoints>(map.Count);
+        foreach (KeyValuePair<ILFunction, List<ICSharpCode.Decompiler.DebugInfo.SequencePoint>> kv in map)
+        {
+            ILFunction function = kv.Key;
+            IMethod method = function.MoveNextMethod ?? function.Method;
+            if (method == null) continue;
+            EntityHandle handle = method.MetadataToken;
+            if (handle.IsNil || handle.Kind != HandleKind.MethodDefinition) continue;
+
+            int methodToken = MetadataTokens.GetToken(handle);
+            int codeLength = 0;
+            int localSignatureToken = 0;
+            MethodDefinition definition = reader.GetMethodDefinition((MethodDefinitionHandle)handle);
+            if (definition.RelativeVirtualAddress != 0)
+            {
+                MethodBodyBlock body = module.Reader.GetMethodBody(definition.RelativeVirtualAddress);
+                codeLength = body.GetILBytes()?.Length ?? 0;
+                StandaloneSignatureHandle localSignature = body.LocalSignature;
+                localSignatureToken = localSignature.IsNil ? 0 : MetadataTokens.GetToken(localSignature);
+            }
+
+            List<IlSpySequencePoint> points = new List<IlSpySequencePoint>(kv.Value.Count);
+            foreach (ICSharpCode.Decompiler.DebugInfo.SequencePoint sp in kv.Value)
+            {
+                points.Add(new IlSpySequencePoint(sp.Offset, sp.StartLine, sp.StartColumn, sp.EndLine, sp.EndColumn, sp.IsHidden));
+            }
+            result.Add(new MethodSequencePoints(methodToken, localSignatureToken, codeLength, points));
+        }
+        return result;
     }
 
     private static string DisassembleMixed(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs)

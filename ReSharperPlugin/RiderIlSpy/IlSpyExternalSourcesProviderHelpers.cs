@@ -335,4 +335,68 @@ internal static class IlSpyExternalSourcesProviderHelpers
         sb.Append('\n');
         return sb.ToString();
     }
+
+    /// <summary>
+    /// Number of source lines a prepended banner string occupies. The banner is
+    /// glued in front of the decompiled text verbatim (<c>banner + content</c>),
+    /// so every <c>\n</c> in the banner pushes the real source down by one line.
+    /// Returns 0 for a null/empty banner (banner disabled). Used to shift
+    /// sequence-point line numbers — which ICSharpCode.Decompiler emits relative
+    /// to the un-bannered syntax tree — onto the lines the user actually sees.
+    /// </summary>
+    public static int CountBannerLines(string? banner)
+    {
+        if (string.IsNullOrEmpty(banner)) return 0;
+        int count = 0;
+        foreach (char c in banner!)
+            if (c == '\n') count++;
+        return count;
+    }
+
+    /// <summary>
+    /// Shifts every non-hidden sequence point's start/end line down by
+    /// <paramref name="bannerLineCount"/> so the points line up with the
+    /// banner-prefixed text the debugger will read from the cache. Hidden points
+    /// (the portable-PDB 0xFEEFEE sentinel) carry no real source region, so they
+    /// pass through untouched. Columns and IL offsets are never touched — the
+    /// banner only adds whole lines. Returns the input unchanged when there is no
+    /// banner (offset &lt;= 0) or no methods, so the common no-banner path
+    /// allocates nothing.
+    /// </summary>
+    public static IReadOnlyList<MethodSequencePoints> OffsetSequencePointsByBannerLines(
+        IReadOnlyList<MethodSequencePoints> methods, int bannerLineCount)
+    {
+        if (bannerLineCount <= 0 || methods.Count == 0) return methods;
+        List<MethodSequencePoints> shiftedMethods = new List<MethodSequencePoints>(methods.Count);
+        foreach (MethodSequencePoints method in methods)
+        {
+            List<IlSpySequencePoint> shiftedPoints = new List<IlSpySequencePoint>(method.Points.Count);
+            foreach (IlSpySequencePoint point in method.Points)
+            {
+                shiftedPoints.Add(point.IsHidden
+                    ? point
+                    : point with
+                    {
+                        StartLine = point.StartLine + bannerLineCount,
+                        EndLine = point.EndLine + bannerLineCount,
+                    });
+            }
+            shiftedMethods.Add(method with { Points = shiftedPoints });
+        }
+        return shiftedMethods;
+    }
+
+    /// <summary>
+    /// Whether an Enabled-flag change should trigger eviction of the entries we
+    /// wrote under Rider's shared "decompiler" cache id. True only on the
+    /// enable->disable edge (<paramref name="wasEnabled"/> true,
+    /// <paramref name="nowEnabled"/> false): that is the moment dotPeek takes
+    /// back ownership of navigation and would otherwise serve our stale ILSpy
+    /// output. Same-value fires (including the initial advise replay of the
+    /// default-true value) and the disable->enable edge return false — on
+    /// re-enable our provider wins navigation again and re-decompiles on demand,
+    /// so there's nothing to evict.
+    /// </summary>
+    public static bool ShouldEvictOnEnabledChange(bool wasEnabled, bool nowEnabled)
+        => wasEnabled && !nowEnabled;
 }

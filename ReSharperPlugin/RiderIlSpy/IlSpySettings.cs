@@ -88,5 +88,4 @@ public class IlSpySettings
     // host is unreachable we want to fall back to local decompilation fast.
     [SettingsEntry(5, "SourceLink fetch timeout (seconds)")]
     public int SourceLinkTimeoutSeconds;
-
 }

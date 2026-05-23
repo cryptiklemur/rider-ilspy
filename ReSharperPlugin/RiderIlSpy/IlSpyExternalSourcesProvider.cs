@@ -35,7 +35,17 @@ namespace RiderIlSpy;
 [SolutionComponent(Instantiation.DemandAnyThreadSafe)]
 public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
 {
-    private const string DecompilerId = "RiderIlSpy";
+    // Rider's built-in decompiler cache id (mirrors DecompiledSourcesConstants.Id
+    // in the SDK). We deliberately write our cache items under this id rather
+    // than a plugin-private one: the platform's built-in
+    // DecompiledSourcesExternalSourcesProvider is the ONLY provider Rider's
+    // debugger consults for decompiled-source debug data, and it serves
+    // SourceDebugData only for items tagged with this id (and stored under its
+    // cache subfolder). Sharing the namespace is what lets breakpoints bind in
+    // decompiled BCL/NuGet source against our ILSpy-generated sequence points.
+    // The cost — Rider's dotPeek can serve a stale ILSpy-authored entry after
+    // ILSpy is toggled off — is handled by EvictTrackedEntries on disable.
+    private const string DecompilerId = "decompiler";
 
     private static readonly ILogger ourLogger = Logger.GetLogger<IlSpyExternalSourcesProvider>();
 
@@ -86,9 +96,11 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         // Track the frontend's enabled flag so IsApplicableForNavigation /
         // IsPreferredForNavigation can short-circuit the entire provider
         // when the user has toggled ILSpy off from the status bar widget.
-        // No re-decompile / readyTick needed on enable-change: the next
-        // navigation request just re-evaluates against the new flag.
-        myRiderIlSpyModel.Enabled.Advise(lifetime, value => myEnabled = value);
+        // On an enable->disable transition we also evict everything we wrote
+        // under the shared "decompiler" cache id (see OnEnabledChanged) so
+        // Rider's own dotPeek re-decompiles fresh instead of serving our
+        // stale ILSpy-authored entry.
+        myRiderIlSpyModel.Enabled.Advise(lifetime, OnEnabledChanged);
     }
 
     public string PresentableShortName => "ILSpy";
@@ -127,6 +139,55 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     // default-true initializer.
     private bool IsIlSpyEnabled() => myEnabled;
 
+    // rd Enabled-property adviser. Records the new flag, and on an
+    // enable->disable transition evicts every cache entry we authored so
+    // Rider's own dotPeek decompiler re-runs on the next navigation instead
+    // of reusing our ILSpy output (banner + synthetic debug data) from the
+    // shared "decompiler" cache namespace. The transition predicate is the
+    // pure IlSpyExternalSourcesProviderHelpers.ShouldEvictOnEnabledChange so
+    // the "evict only on true->false" rule is unit-tested without the SDK.
+    // The initial advise-fire (value == default true) is a no-op transition.
+    private void OnEnabledChanged(bool enabled)
+    {
+        bool shouldEvict = IlSpyExternalSourcesProviderHelpers.ShouldEvictOnEnabledChange(myEnabled, enabled);
+        myEnabled = enabled;
+        if (shouldEvict) EvictTrackedEntries();
+    }
+
+    // Deletes the on-disk cache files (content + ".p" properties + ".dd" debug
+    // data sidecars) for every entry we've tracked, computing each path via the
+    // same GetFilePath hash PutCacheItem uses. The platform cache exposes no
+    // per-item removal — only the nuclear ClearCache() — so targeted file
+    // deletion is the way to drop just our entries and leave any unrelated
+    // dotPeek cache items intact. After deletion, GetCacheItem misses for those
+    // files and dotPeek re-decompiles fresh. The tracked entries are left in
+    // myEntryCache: re-enabling ILSpy and re-navigating re-populates them on a
+    // cache miss, and RedecompileAllEntriesAsync is guarded to no-op while
+    // disabled so a stray mode change can't resurrect the evicted ILSpy output.
+    private void EvictTrackedEntries()
+    {
+        foreach (KeyValuePair<string, TypeDecompileEntry> kv in myEntryCache.Snapshot())
+        {
+            TypeDecompileEntry entry = kv.Value;
+            try
+            {
+                FileSystemPath path = myCache.GetFilePath(Id, entry.Assembly, entry.Moniker, entry.FileName);
+                DeleteIfExists(path);
+                DeleteIfExists(path.AddSuffix(".p"));
+                DeleteIfExists(path.AddSuffix(".dd"));
+            }
+            catch (Exception ex)
+            {
+                ourLogger.Error(ex, "RiderIlSpy.EvictTrackedEntries failed for " + entry.TypeFullName);
+            }
+        }
+    }
+
+    private static void DeleteIfExists(FileSystemPath path)
+    {
+        if (path.ExistsFile) path.DeleteFile();
+    }
+
     public ExternalSourcesMapping? MapFileToAssembly(FileSystemPath file)
     {
         if (!myCache.CanBeCachedFile(Id, file)) return null;
@@ -163,18 +224,45 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         return NavigateToSources(navigationInfo.ElementToSearchIn, taskExecutor);
     }
 
-    // RiderIlSpy doesn't synthesize a PDB for its decompiled output — ILSpy emits
-    // source text, not portable debug info. ExtendedDebugData would need line-mapping
-    // back to the original assembly's PDB, which we don't track per cache entry.
-    // The honest contract is "we have nothing extra to offer here". Returning false
-    // from IsPreferredForGettingDebugData lets Rider fall back to the platform's
-    // default debug-data flow for our cached files rather than wasting a call into
-    // GetTypeDebugData / GetSourceDebugData that will always answer null.
+    // GetTypeDebugData is the type-keyed entry the platform uses for IDE
+    // inspection features that haven't navigated to a source file yet. We don't
+    // pre-decompile types speculatively, so we have nothing to hand back at that
+    // entry point — the actual breakpoint-binding flow comes through the
+    // file-keyed GetSourceDebugData once the user opens decompiled source, and
+    // that path *is* implemented below.
     public ExtendedDebugData? GetTypeDebugData(ICompiledElement type, ITaskExecutor taskExecutor) => null;
 
-    public ExtendedDebugData? GetSourceDebugData(FileSystemPath file) => null;
+    /// <summary>
+    /// Surface the per-method sequence-point graph the debugger needs to bind
+    /// breakpoints in decompiled source for a file we cached. Looks up the
+    /// cache entry by file path, pulls the previously-written <c>DebugData</c>
+    /// (built by <see cref="DebugDataFactory.BuildDebugData"/> at PutCacheItem
+    /// time), and wraps it as <see cref="ExtendedDebugData"/> tagged
+    /// <see cref="DebugDataOrigin.Decompiled"/> so Rider knows the SPs come
+    /// from decompiled source rather than a real PDB.
+    /// </summary>
+    public ExtendedDebugData? GetSourceDebugData(FileSystemPath file)
+    {
+        if (!myCache.CanBeCachedFile(Id, file)) return null;
+        DecompilationCacheItem? item = myCache.GetCacheItem(file);
+        DebugData? debugData = item?.SourceDebugData;
+        if (debugData == null) return null;
+        // Source the assembly path from the cached property bag rather than
+        // IAssembly.Location.ContainerPhysicalPath — that property is typed
+        // VirtualFileSystemPath in this SDK and the ExtendedDebugData.Create
+        // overload we use wants a string. TryParseEntry already round-trips
+        // the property bag for the navigation path, so reuse it here.
+        TypeDecompileEntry? entry = TryParseEntry(item!.Properties, item.Assembly);
+        if (entry == null) return null;
+        return DebugDataFactory.WrapForAssembly(debugData, item.Assembly.Id, entry.AssemblyFilePath, item.Assembly.FullAssemblyName);
+    }
 
-    public bool IsPreferredForGettingDebugData(FileSystemPath file) => false;
+    // Claim ownership of files we cached so the platform's debug-data orchestrator
+    // routes the per-file query to us instead of polling siblings — none of them
+    // have written SPs for our cache entries. Returning true here implies
+    // GetSourceDebugData must yield real data; the lookup matches the same
+    // (decompilerId, file) test PutCacheItem keyed the entry under.
+    public bool IsPreferredForGettingDebugData(FileSystemPath file) => myCache.CanBeCachedFile(Id, file);
 
     private DecompilationCacheItem? DecompileToCacheItem(ICompiledElement compiledElement, ITaskExecutor taskExecutor)
     {
@@ -303,11 +391,11 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
                 // SourceLink HTTP fetch only returns Content on success;
                 // there's no failure-content path from the gateway, so
                 // mirror that as Success=true.
-                return new DecompileFetchOutcome(attempt.Content, FromSourceLink: true, outcome, Success: true, FailureReason: null);
+                return new DecompileFetchOutcome(attempt.Content, FromSourceLink: true, outcome, Success: true, FailureReason: null, Methods: DecompileFetchOutcome.EmptyMethods);
             }
         }
         DecompileResult decompile = myDecompiler.DecompileType(assemblyPath, typeFullName, request.DecompilerSettings, request.ExtraSearchDirs, request.Mode);
-        return new DecompileFetchOutcome(decompile.Content, FromSourceLink: false, outcome, decompile.Success, decompile.FailureReason);
+        return new DecompileFetchOutcome(decompile.Content, FromSourceLink: false, outcome, decompile.Success, decompile.FailureReason, decompile.Methods);
     }
 
     /// <summary>
@@ -379,14 +467,21 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     // only in whether they thread a SourceLinkOutcome (fetch path) or not
     // (redecompile path, where no SourceLink fetch is re-attempted) — so
     // sourceLinkOutcome is nullable. Early-returns when ShowBanner is off so we
-    // skip the metadata read (matches the previous ternary).
-    private string ApplyBannerIfEnabled(string assemblyPath, string typeFullName, IlSpyRequestSettings request, SourceLinkOutcome? sourceLinkOutcome, string content)
+    // skip the metadata read (matches the previous ternary). Returns the banner
+    // line count alongside the prepended content so the debug-data pipeline can
+    // shift ICSharpCode.Decompiler's un-bannered sequence-point line numbers
+    // onto the lines the user actually sees in Rider — without that delta,
+    // breakpoints would bind to the wrong source line (offset by banner height).
+    private BannerApplication ApplyBannerIfEnabled(string assemblyPath, string typeFullName, IlSpyRequestSettings request, SourceLinkOutcome? sourceLinkOutcome, string content)
     {
-        if (!request.ShowBanner) return content;
+        if (!request.ShowBanner) return new BannerApplication(content, BannerLineCount: 0);
         AssemblyBannerMetadata? bannerMeta = ReadBannerMetadata(assemblyPath);
         BannerContext bannerCtx = new BannerContext(bannerMeta, assemblyPath, typeFullName, request.Mode, request.ExtraSearchDirs);
-        return IlSpyExternalSourcesProviderHelpers.WithBannerIfEnabled(showBanner: true, bannerCtx, sourceLinkOutcome, content);
+        string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(bannerCtx, sourceLinkOutcome);
+        return new BannerApplication(banner + content, IlSpyExternalSourcesProviderHelpers.CountBannerLines(banner));
     }
+
+    private readonly record struct BannerApplication(string Content, int BannerLineCount);
 
     // Post-fetch commit phase: banner enrichment (skipped for SourceLink output
     // — see ApplyBannerIfEnabled rationale), WriteToCache, then entry tracking.
@@ -404,11 +499,20 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         DecompileFetchOutcome fetch)
     {
         string content = fetch.Content;
+        int bannerLineCount = 0;
         if (!fetch.FromSourceLink)
         {
-            content = ApplyBannerIfEnabled(assemblyFile.FullPath, fullName, request, fetch.SourceLinkOutcome, content);
+            BannerApplication applied = ApplyBannerIfEnabled(assemblyFile.FullPath, fullName, request, fetch.SourceLinkOutcome, content);
+            content = applied.Content;
+            bannerLineCount = applied.BannerLineCount;
         }
-        DecompilationCacheItem? result = WriteToCache(assembly, assemblyFile.FullPath, fullName, moniker, fileName, request.Mode, content);
+        // SourceLink output (real upstream source) carries its own real PDB data
+        // via the platform's normal pipeline, so we don't synthesize debug data
+        // for it — only the decompiled path needs the synthetic sequence points.
+        DebugData? sourceDebugData = fetch.FromSourceLink
+            ? null
+            : DebugDataFactory.BuildDebugData(GetCacheDocumentUrl(assembly, moniker, fileName), fetch.Methods, bannerLineCount);
+        DecompilationCacheItem? result = WriteToCache(assembly, assemblyFile.FullPath, fullName, moniker, fileName, request.Mode, content, sourceDebugData);
         if (result != null)
         {
             myEntryCache.Track(moniker, new TypeDecompileEntry(assembly, assemblyFile.FullPath, fullName, moniker, fileName, request.Mode));
@@ -423,11 +527,24 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     /// a concrete <c>Dictionary&lt;,&gt;</c> so we pass it straight to
     /// PutCacheItem's IDictionary parameter — no cast or interface gymnastics needed.
     /// </summary>
-    private DecompilationCacheItem? WriteToCache(IAssembly assembly, string assemblyPath, string typeFullName, string moniker, string fileName, IlSpyOutputMode mode, string content)
+    private DecompilationCacheItem? WriteToCache(IAssembly assembly, string assemblyPath, string typeFullName, string moniker, string fileName, IlSpyOutputMode mode, string content, DebugData? sourceDebugData)
     {
         Dictionary<string, string> properties = IlSpyExternalSourcesProviderHelpers.BuildCacheProperties(mode, assemblyPath, typeFullName, moniker, fileName);
-        return myCache.PutCacheItem(Id, assembly, moniker, fileName, properties, content, sourceDebugData: null);
+        return myCache.PutCacheItem(Id, assembly, moniker, fileName, properties, content, sourceDebugData);
     }
+
+    // The debug-data document URL must be the *full cache file path* the entry
+    // will be written to, not the bare file name. The debugger binds a
+    // breakpoint by matching the breakpoint's document path (the absolute path
+    // of the open decompiled file) against the document URL embedded in the
+    // DebugData's sequence points — Rider's own dotPeek provider stores the
+    // absolute cache path here, and a bare "Type.cs" never matches, so the
+    // lookup returns no method and the breakpoint stays unbound. GetFilePath is
+    // the same path computation PutCacheItem uses internally (a pure hash over
+    // the assembly id + moniker, no PSI access), so calling it ahead of the
+    // write yields exactly the path the content lands at.
+    private string GetCacheDocumentUrl(IAssembly assembly, string moniker, string fileName)
+        => myCache.GetFilePath(Id, assembly, moniker, fileName).FullPath;
 
     // Provider-layer wrapper: delegates to the SDK-free
     // IlSpyExternalSourcesProviderHelpers.TryParseDecompileEntryFields parser
@@ -482,6 +599,11 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
 
     private async Task RedecompileAllEntriesAsync(CancellationToken cancellationToken)
     {
+        // A mode change while ILSpy is disabled must not rewrite cache entries:
+        // we share the "decompiler" id with dotPeek, so resurrecting ILSpy
+        // output here would undo the eviction done on the enable->disable
+        // transition and serve stale banner/debug-data under dotPeek's name.
+        if (!myEnabled) return;
         if (myEntryCache.IsEmpty) return;
 
         // One snapshot for the whole pass — concurrent settings writes can't
@@ -511,12 +633,13 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
                     ourLogger.Warn("RiderIlSpy.RedecompileEntry skipping cache replace for " + entry.TypeFullName + ": " + (decompile.FailureReason ?? "unknown failure"));
                     continue;
                 }
-                string content = decompile.Content;
                 // Redecompile path doesn't re-attempt SourceLink — the toggle is between
                 // ILSpy output modes (C# / IL / Mixed). Pass null sourceLinkOutcome so
                 // we don't synthesize a placeholder just to indicate "we didn't try" —
                 // null already says that to the formatter.
-                content = ApplyBannerIfEnabled(entry.AssemblyFilePath, entry.TypeFullName, request, sourceLinkOutcome: null, content);
+                BannerApplication applied = ApplyBannerIfEnabled(entry.AssemblyFilePath, entry.TypeFullName, request, sourceLinkOutcome: null, decompile.Content);
+                string content = applied.Content;
+                DebugData? sourceDebugData = DebugDataFactory.BuildDebugData(GetCacheDocumentUrl(entry.Assembly, entry.Moniker, entry.FileName), decompile.Methods, applied.BannerLineCount);
 
                 // Reuses the same WriteToCache helper as DecompileToCacheItem to
                 // keep the decompile -> banner -> cache pipeline single-sourced.
@@ -529,7 +652,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
                 await ReadActionUtil.StartReadActionAsync(
                     myShellLocks,
                     myLifetime,
-                    () => WriteToCache(entry.Assembly, entry.AssemblyFilePath, entry.TypeFullName, entry.Moniker, entry.FileName, request.Mode, content)).ConfigureAwait(false);
+                    () => WriteToCache(entry.Assembly, entry.AssemblyFilePath, entry.TypeFullName, entry.Moniker, entry.FileName, request.Mode, content, sourceDebugData)).ConfigureAwait(false);
                 // TypeDecompileEntry is immutable — swap in a new entry with
                 // the updated Mode via TypeEntryCache.Track, which holds the
                 // cache lock so the swap is atomic with respect to the sync

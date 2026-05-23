@@ -293,6 +293,30 @@ public class IlSpyDecompilerSmokeTests
         }
     }
 
+    // Diagnostic: decompiling a real type in CSharp mode must surface
+    // sequence points on DecompileResult.Methods, because that's the data the
+    // provider feeds to DebugDataFactory.BuildDebugData to make breakpoints
+    // bind in decompiled source. If this drops to empty, every breakpoint in
+    // the IDE smoke test will fail to bind even though the file content looks
+    // right. Pins the contract: at least one method, at least one non-hidden
+    // sequence point, with line numbers within the decompiled content.
+    [Fact]
+    public void DecompileType_csharp_mode_populates_sequence_points()
+    {
+        IlSpyDecompiler decompiler = new IlSpyDecompiler();
+        DecompilerSettings settings = new DecompilerSettings();
+        DecompileResult result = decompiler.DecompileType(TestAssemblyPath, FixtureTypeName, settings, extraSearchDirs: null, mode: IlSpyOutputMode.CSharp);
+        Assert.True(result.Success);
+        Assert.NotEmpty(result.Methods);
+        MethodSequencePoints firstWithPoints = result.Methods.First(m => m.Points.Count > 0);
+        Assert.NotEqual(0, firstWithPoints.MethodToken);
+        Assert.True(firstWithPoints.CodeLength > 0, "expected non-zero CodeLength for a real method body");
+        IlSpySequencePoint visible = firstWithPoints.Points.First(p => !p.IsHidden);
+        int contentLines = result.Content.Split('\n').Length;
+        Assert.InRange(visible.StartLine, 1, contentLines);
+        Assert.InRange(visible.EndLine, visible.StartLine, contentLines);
+    }
+
     // Paired with the test above: confirms settings flow through to the
     // project output the same way they flow through per-type decompile. With
     // primary-ctor syntax disabled, the BugTwoRecordFixture should appear as
