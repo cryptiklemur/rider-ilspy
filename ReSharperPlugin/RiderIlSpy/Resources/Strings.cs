@@ -58,6 +58,10 @@ internal static class Strings
     public static string OptionsPage_LanguageVersion_CSharp8_0 => Get(nameof(OptionsPage_LanguageVersion_CSharp8_0));
     public static string OptionsPage_LanguageVersion_CSharp7_3 => Get(nameof(OptionsPage_LanguageVersion_CSharp7_3));
 
+    public static string OptionsPage_Header_ReferenceAssemblies => Get(nameof(OptionsPage_Header_ReferenceAssemblies));
+    public static string OptionsPage_ReferenceAssemblies_Comment => Get(nameof(OptionsPage_ReferenceAssemblies_Comment));
+    public static string OptionsPage_DecompileReferenceAssemblies_Label => Get(nameof(OptionsPage_DecompileReferenceAssemblies_Label));
+
     public static string OptionsPage_Header_SourceLink => Get(nameof(OptionsPage_Header_SourceLink));
     public static string OptionsPage_SourceLink_Comment => Get(nameof(OptionsPage_SourceLink_Comment));
     public static string OptionsPage_PreferSourceLink_Label => Get(nameof(OptionsPage_PreferSourceLink_Label));

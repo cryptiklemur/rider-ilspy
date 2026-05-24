@@ -53,7 +53,8 @@ public sealed class IlSpyRequestSettingsBuilder
             ExtraSearchDirs: GetExtraSearchDirs(),
             ShowBanner: mySettings.GetValue((IlSpySettings s) => s.ShowDiagnosticBanner),
             PreferSourceLink: mySettings.GetValue((IlSpySettings s) => s.PreferSourceLink),
-            SourceLinkTimeoutSeconds: mySettings.GetValue((IlSpySettings s) => s.SourceLinkTimeoutSeconds));
+            SourceLinkTimeoutSeconds: mySettings.GetValue((IlSpySettings s) => s.SourceLinkTimeoutSeconds),
+            DecompileReferenceAssemblies: mySettings.GetValue((IlSpySettings s) => s.DecompileReferenceAssemblies));
     }
 
     private DecompilerSettings BuildDecompilerSettings()

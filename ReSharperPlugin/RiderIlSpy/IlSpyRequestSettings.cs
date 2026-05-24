@@ -18,10 +18,12 @@ namespace RiderIlSpy;
 /// <param name="ShowBanner">Whether to prepend the diagnostic banner to ILSpy output (no-op when content came from SourceLink).</param>
 /// <param name="PreferSourceLink">Whether to attempt SourceLink before falling back to ILSpy decompilation.</param>
 /// <param name="SourceLinkTimeoutSeconds">HTTP timeout for the SourceLink fetch; ignored when <see cref="PreferSourceLink"/> is false.</param>
+/// <param name="DecompileReferenceAssemblies">When false, the provider refuses to resolve to a ref-only assembly (paths with the SDK `/ref/` marker). The navigation falls through to Rider's built-in decompiler instead of producing ILSpy's empty-body stub output. When true, refs are allowed as fallback when no impl candidate exists.</param>
 public sealed record IlSpyRequestSettings(
     IlSpyOutputMode Mode,
     DecompilerSettings DecompilerSettings,
     IReadOnlyList<string> ExtraSearchDirs,
     bool ShowBanner,
     bool PreferSourceLink,
-    int SourceLinkTimeoutSeconds);
+    int SourceLinkTimeoutSeconds,
+    bool DecompileReferenceAssemblies);

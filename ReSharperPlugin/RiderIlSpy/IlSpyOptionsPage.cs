@@ -58,6 +58,10 @@ public class IlSpyOptionsPage : BeSimpleOptionsPage
             _ => v.ToString(),
         });
 
+        AddHeader(Strings.OptionsPage_Header_ReferenceAssemblies);
+        AddCommentText(Strings.OptionsPage_ReferenceAssemblies_Comment);
+        AddBoolOption((IlSpySettings s) => s.DecompileReferenceAssemblies, Strings.OptionsPage_DecompileReferenceAssemblies_Label, null);
+
         AddHeader(Strings.OptionsPage_Header_SourceLink);
         AddCommentText(Strings.OptionsPage_SourceLink_Comment);
         AddBoolOption((IlSpySettings s) => s.PreferSourceLink, Strings.OptionsPage_PreferSourceLink_Label, null);

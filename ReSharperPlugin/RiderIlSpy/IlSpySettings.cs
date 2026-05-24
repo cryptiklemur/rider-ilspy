@@ -40,6 +40,17 @@ public class IlSpySettings
     [SettingsEntry("", "Extra directories to search for runtime assemblies, separated by the platform path separator (';' on Windows, ':' on Linux/macOS)")]
     public string AssemblyResolveDirs = "";
 
+    // When false (default), the provider refuses to produce decompiled output for
+    // reference assemblies (paths containing the `/ref/` SDK marker — e.g. NuGet
+    // ref packs like krafs.rimworld.ref, or compile-time .NETCore.App refs).
+    // Refusing returns an empty NavigateToSources result, which lets Rider's
+    // built-in dotPeek pick up the navigation instead — the user still
+    // ctrl+clicks into the type, just without ILSpy's ref-only stub output.
+    // Enable when the user explicitly wants to inspect the publicised/wrapped
+    // surface of a ref pack (e.g. seeing what krafs exposes after publicization).
+    [SettingsEntry(false, "Decompile reference assemblies (ref packs / publicised wrappers) instead of deferring to Rider's built-in decompiler")]
+    public bool DecompileReferenceAssemblies;
+
     [SettingsEntry(true, "Use async/await syntax")]
     public bool AsyncAwait;
 

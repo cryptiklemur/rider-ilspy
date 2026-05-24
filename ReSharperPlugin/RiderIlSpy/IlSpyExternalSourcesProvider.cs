@@ -18,6 +18,7 @@ using JetBrains.Metadata.Debug;
 using JetBrains.Metadata.Reader.API;
 using JetBrains.ProjectModel;
 using JetBrains.ProjectModel.Model2.Assemblies.Interfaces;
+using JetBrains.ProjectModel.Model2.References;
 using JetBrains.Rd;
 using JetBrains.Rd.Base;
 using JetBrains.ReSharper.Feature.Services.ExternalSource;
@@ -55,6 +56,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     private readonly IContextBoundSettingsStoreLive mySettings;
     private readonly IShellLocks myShellLocks;
     private readonly Lifetime myLifetime;
+    private readonly IModuleReferencesResolveStore myReferencesResolveStore;
     private readonly TypeEntryCache myEntryCache = new TypeEntryCache();
     private readonly IlSpyRequestSettingsBuilder mySettingsBuilder;
     private readonly RiderIlSpyModel myRiderIlSpyModel;
@@ -74,13 +76,15 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         INavigationDecompilationCache cache,
         IlSpyDecompiler decompiler,
         IlSpySourceLinkGateway sourceLinkGateway,
-        IShellLocks shellLocks)
+        IShellLocks shellLocks,
+        IModuleReferencesResolveStore referencesResolveStore)
     {
         myCache = cache;
         myDecompiler = decompiler;
         mySourceLinkGateway = sourceLinkGateway;
         myShellLocks = shellLocks;
         myLifetime = lifetime;
+        myReferencesResolveStore = referencesResolveStore;
         mySettings = settingsStore.BindToContextLive(lifetime, ContextRange.ApplicationWide);
         mySettingsBuilder = new IlSpyRequestSettingsBuilder(mySettings, ourLogger);
         myRiderIlSpyModel = solution.GetProtocolSolution().GetRiderIlSpyModel();
@@ -274,15 +278,21 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             IAssembly? assembly = top.Module.ContainingProjectModule as IAssembly;
             if (assembly == null) return null;
 
-            FileSystemPath? assemblyFile = ResolveAssemblyFile(assembly);
+            // Snapshot request settings before resolve so the resolve pass can
+            // honor the DecompileReferenceAssemblies gate (refuse to emit
+            // ILSpy ref-stub output and let Rider's built-in decompiler take
+            // the navigation instead) under the same view of settings the
+            // rest of this pass uses.
+            IlSpyRequestSettings request = SnapshotRequestSettings();
+
+            FileSystemPath? assemblyFile = ResolveAssemblyFile(assembly, request.DecompileReferenceAssemblies);
             if (assemblyFile == null) return null;
+            ourLogger.Verbose("RiderIlSpy.ResolveAssemblyFile picked " + assemblyFile.FullPath + " for " + assembly.FullAssemblyName);
 
             IClrTypeName? clrName = top.GetClrName();
             if (clrName == null) return null;
             string fullName = clrName.FullName;
             if (string.IsNullOrEmpty(fullName)) return null;
-
-            IlSpyRequestSettings request = SnapshotRequestSettings();
             string moniker = MonikerUtil.GetTypeCacheMoniker(top);
             string fileName = (top.ShortName ?? "Decompiled") + ".cs";
 
@@ -323,11 +333,114 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     /// the implementation assembly over reference assemblies (the `/ref/` path
     /// segment is the standard SDK marker for ref-only assemblies). Reference
     /// assemblies contain no IL bodies, so decompiling one yields stubs with empty
-    /// method bodies — useless for source navigation. Falls back to the first
-    /// existing file when only ref assemblies are present, so we at least return
-    /// stubs instead of null.
+    /// method bodies — useless for source navigation.
+    ///
+    /// Resolution proceeds in two passes:
+    /// 1) Walk the csproj <c>&lt;Reference&gt;</c> items via
+    ///    <c>IModuleReferencesResolveStore.GetReferencesToAssemblyForAllContexts</c>
+    ///    and pick the best HintPath. This surfaces every project-level reference
+    ///    (including wildcard <c>Include="*.dll"</c> glob expansions) so when the
+    ///    user's csproj points at both a publicised ref pack (e.g. Krafs.RimWorld.Ref)
+    ///    AND a local impl directory (RimWorldLinux_Data/Managed/), we prefer the
+    ///    impl and decompile full method bodies instead of stubs.
+    /// 2) Fall back to <c>IAssembly.GetFiles()</c> for assemblies that don't have
+    ///    project-level references (BCL types, NuGet runtime refs, transitively-pulled
+    ///    assemblies).
     /// </summary>
-    private static FileSystemPath? ResolveAssemblyFile(IAssembly assembly)
+    private FileSystemPath? ResolveAssemblyFile(IAssembly assembly, bool allowRefAssemblies)
+    {
+        FileSystemPath? fromCsprojWildcards = TryResolveFromCsprojWildcards(assembly, allowRefAssemblies);
+        if (fromCsprojWildcards != null) return fromCsprojWildcards;
+        FileSystemPath? fromProjectRefs = TryResolveFromProjectReferences(assembly, allowRefAssemblies);
+        if (fromProjectRefs != null) return fromProjectRefs;
+        return PickFromAssemblyFiles(assembly, allowRefAssemblies);
+    }
+
+    /// <summary>
+    /// Plan-B resolution path: bypass Rider's MSBuild-resolved reference graph
+    /// (which dedups to a single reference per assembly identity, dropping the
+    /// wildcard <c>Include="path/*.dll"</c> impl candidates a project's csproj
+    /// explicitly lists) and walk the raw csproj XML of every project that
+    /// references <paramref name="assembly"/>. Returns the impl-preferred match
+    /// or null when no csproj reference yields an on-disk file matching the
+    /// assembly's short name.
+    /// </summary>
+    private FileSystemPath? TryResolveFromCsprojWildcards(IAssembly assembly, bool allowRefAssemblies)
+    {
+        try
+        {
+            string? assemblyShortName = IlSpyExternalSourcesProviderHelpers.TryParseAssemblyShortName(assembly.FullAssemblyName);
+            if (string.IsNullOrEmpty(assemblyShortName)) return null;
+
+            ICollection<IModuleToAssemblyReference> refs = myReferencesResolveStore.GetReferencesToAssemblyForAllContexts(assembly);
+            if (refs.Count == 0) return null;
+
+            HashSet<string> projectFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (IModuleToAssemblyReference r in refs)
+            {
+                IProjectToAssemblyReference? projectRef = r as IProjectToAssemblyReference;
+                if (projectRef == null) continue;
+                IProject project = projectRef.OwnerModule;
+                FileSystemPath nativePath = project.ProjectFileLocation.ToNativeFileSystemPath();
+                if (nativePath.IsEmpty) continue;
+                projectFiles.Add(nativePath.FullPath);
+            }
+
+            if (projectFiles.Count == 0) return null;
+
+            List<string> candidates = new List<string>();
+            foreach (string projectFile in projectFiles)
+            {
+                IReadOnlyList<string> matches = IlSpyExternalSourcesProviderHelpers.EnumerateCsprojReferenceCandidates(
+                    projectFile,
+                    assemblyShortName!,
+                    File.ReadAllText,
+                    Directory.EnumerateFiles);
+                foreach (string m in matches) candidates.Add(m);
+            }
+
+            string? picked = IlSpyExternalSourcesProviderHelpers.PickImplPathFromCandidates(candidates, File.Exists, allowRefAssemblies);
+            return picked == null ? null : FileSystemPath.Parse(picked);
+        }
+        catch (Exception ex)
+        {
+            ourLogger.Error(ex, "RiderIlSpy.TryResolveFromCsprojWildcards failed for " + assembly.FullAssemblyName);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads every csproj <c>&lt;Reference&gt;</c> HintPath that targets
+    /// <paramref name="assembly"/> (across all referencing projects + TFMs) and
+    /// picks the best impl-preferred candidate. Returns null when no project-level
+    /// reference exists or no HintPath points at an on-disk file.
+    /// </summary>
+    private FileSystemPath? TryResolveFromProjectReferences(IAssembly assembly, bool allowRefAssemblies)
+    {
+        try
+        {
+            ICollection<IModuleToAssemblyReference> refs = myReferencesResolveStore.GetReferencesToAssemblyForAllContexts(assembly);
+            if (refs.Count == 0) return null;
+            List<string?> hintPaths = new List<string?>(refs.Count);
+            foreach (IModuleToAssemblyReference r in refs)
+            {
+                VirtualFileSystemPath hint = r.ReferenceTarget.HintLocation;
+                if (hint.IsEmpty) continue;
+                FileSystemPath nativeHint = hint.ToNativeFileSystemPath();
+                if (nativeHint.IsEmpty) continue;
+                hintPaths.Add(nativeHint.FullPath);
+            }
+            string? picked = IlSpyExternalSourcesProviderHelpers.PickImplPathFromCandidates(hintPaths, File.Exists, allowRefAssemblies);
+            return picked == null ? null : FileSystemPath.Parse(picked);
+        }
+        catch (Exception ex)
+        {
+            ourLogger.Error(ex, "RiderIlSpy.TryResolveFromProjectReferences failed for " + assembly.FullAssemblyName);
+            return null;
+        }
+    }
+
+    private static FileSystemPath? PickFromAssemblyFiles(IAssembly assembly, bool allowRefAssemblies)
     {
         FileSystemPath? assemblyFile = null;
         foreach (IAssemblyFile candidate in assembly.GetFiles())
@@ -335,6 +448,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
             FileSystemPath? candidatePath = candidate.Location.AssemblyPhysicalPath?.ToNativeFileSystemPath();
             if (candidatePath == null || candidatePath.IsEmpty || !candidatePath.ExistsFile) continue;
             bool isRef = IlSpyExternalSourcesProviderHelpers.IsRefAssemblyPath(candidatePath.FullPath);
+            if (isRef && !allowRefAssemblies) continue;
             if (assemblyFile == null) assemblyFile = candidatePath;
             if (!isRef) { assemblyFile = candidatePath; break; }
         }

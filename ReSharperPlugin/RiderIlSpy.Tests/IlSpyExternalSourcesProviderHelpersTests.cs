@@ -436,6 +436,377 @@ public class IlSpyExternalSourcesProviderHelpersTests
         Assert.False(IlSpyExternalSourcesProviderHelpers.IsRefAssemblyPath(string.Empty));
     }
 
+    // PickImplPathFromCandidates: regression coverage for the
+    // "csproj HintPath -> impl preferred over ref" selection in
+    // IlSpyExternalSourcesProvider.TryResolveFromProjectReferences. The
+    // RimWorld user-report shape: csproj has a wildcard Reference Include="*.dll"
+    // pointing at the game's Managed/ directory (impl) AND a krafs ref pack
+    // PackageReference (ref). Without this selection, the ref wins and the
+    // user sees stub method bodies. With it, the impl wins.
+
+    [Fact]
+    public void PickImplPathFromCandidates_prefers_impl_over_ref_when_both_exist()
+    {
+        string refPath = "/home/u/.nuget/packages/krafs.rimworld.ref/1.6.4633/ref/net472/Assembly-CSharp_publicised.dll";
+        string implPath = "/mnt/games/RimWorld/RimWorldLinux_Data/Managed/Assembly-CSharp.dll";
+        HashSet<string> onDisk = new HashSet<string> { refPath, implPath };
+
+        string? picked = IlSpyExternalSourcesProviderHelpers.PickImplPathFromCandidates(
+            new[] { refPath, implPath },
+            onDisk.Contains);
+
+        Assert.Equal(implPath, picked);
+    }
+
+    [Fact]
+    public void PickImplPathFromCandidates_prefers_impl_even_when_ref_listed_first()
+    {
+        string refPath = "/home/u/.nuget/packages/krafs.rimworld.ref/1.6.4633/ref/net472/Assembly-CSharp_publicised.dll";
+        string implPath = "/mnt/games/RimWorld/RimWorldLinux_Data/Managed/Assembly-CSharp.dll";
+        HashSet<string> onDisk = new HashSet<string> { refPath, implPath };
+
+        string? picked = IlSpyExternalSourcesProviderHelpers.PickImplPathFromCandidates(
+            new[] { refPath, implPath },
+            onDisk.Contains);
+
+        Assert.Equal(implPath, picked);
+    }
+
+    [Fact]
+    public void PickImplPathFromCandidates_falls_back_to_ref_when_no_impl_exists()
+    {
+        string refPath = "/home/u/.nuget/packages/krafs.rimworld.ref/1.6.4633/ref/net472/Assembly-CSharp_publicised.dll";
+        string missingImpl = "/mnt/games/RimWorld/RimWorldLinux_Data/Managed/Assembly-CSharp.dll";
+        HashSet<string> onDisk = new HashSet<string> { refPath };
+
+        string? picked = IlSpyExternalSourcesProviderHelpers.PickImplPathFromCandidates(
+            new[] { missingImpl, refPath },
+            onDisk.Contains);
+
+        Assert.Equal(refPath, picked);
+    }
+
+    [Fact]
+    public void PickImplPathFromCandidates_skips_missing_candidates()
+    {
+        string existingImpl = "/mnt/games/RimWorld/RimWorldLinux_Data/Managed/Assembly-CSharp.dll";
+        HashSet<string> onDisk = new HashSet<string> { existingImpl };
+
+        string? picked = IlSpyExternalSourcesProviderHelpers.PickImplPathFromCandidates(
+            new[] { "/nonexistent/a.dll", "/also/missing/b.dll", existingImpl },
+            onDisk.Contains);
+
+        Assert.Equal(existingImpl, picked);
+    }
+
+    [Fact]
+    public void PickImplPathFromCandidates_returns_null_when_nothing_exists()
+    {
+        string? picked = IlSpyExternalSourcesProviderHelpers.PickImplPathFromCandidates(
+            new[] { "/x.dll", "/y.dll" },
+            _ => false);
+
+        Assert.Null(picked);
+    }
+
+    [Fact]
+    public void PickImplPathFromCandidates_ignores_null_and_empty_entries()
+    {
+        string existing = "/mnt/games/RimWorld/RimWorldLinux_Data/Managed/Assembly-CSharp.dll";
+        HashSet<string> onDisk = new HashSet<string> { existing };
+
+        string? picked = IlSpyExternalSourcesProviderHelpers.PickImplPathFromCandidates(
+            new string?[] { null, string.Empty, existing },
+            onDisk.Contains);
+
+        Assert.Equal(existing, picked);
+    }
+
+    [Fact]
+    public void PickImplPathFromCandidates_returns_null_for_null_input()
+    {
+        string? picked = IlSpyExternalSourcesProviderHelpers.PickImplPathFromCandidates(null!, _ => true);
+        Assert.Null(picked);
+    }
+
+    // The allowRefAssemblies flag drives the DecompileReferenceAssemblies setting:
+    // when false the helper refuses to fall back to ref-only candidates so the
+    // provider can return an empty navigation result and let Rider's built-in
+    // decompiler take the ctrl+click instead of producing ILSpy stubs.
+
+    [Fact]
+    public void PickImplPathFromCandidates_returns_null_when_only_ref_exists_and_refs_disallowed()
+    {
+        string ref1 = Path.Combine(Path.GetTempPath(), "ref", "OnlyRef.dll");
+        HashSet<string> onDisk = [ref1];
+        string? picked = IlSpyExternalSourcesProviderHelpers.PickImplPathFromCandidates(
+            [ref1],
+            onDisk.Contains,
+            allowRefAssemblies: false);
+
+        Assert.Null(picked);
+    }
+
+    [Fact]
+    public void PickImplPathFromCandidates_returns_impl_when_both_exist_and_refs_disallowed()
+    {
+        string ref1 = Path.Combine(Path.GetTempPath(), "ref", "Foo.dll");
+        string impl = Path.Combine(Path.GetTempPath(), "impl", "Foo.dll");
+        HashSet<string> onDisk = [ref1, impl];
+        string? picked = IlSpyExternalSourcesProviderHelpers.PickImplPathFromCandidates(
+            [ref1, impl],
+            onDisk.Contains,
+            allowRefAssemblies: false);
+
+        Assert.Equal(impl, picked);
+    }
+
+    [Fact]
+    public void PickImplPathFromCandidates_returns_ref_when_only_ref_exists_and_refs_allowed()
+    {
+        string ref1 = Path.Combine(Path.GetTempPath(), "ref", "OnlyRef.dll");
+        HashSet<string> onDisk = [ref1];
+        string? picked = IlSpyExternalSourcesProviderHelpers.PickImplPathFromCandidates(
+            [ref1],
+            onDisk.Contains,
+            allowRefAssemblies: true);
+
+        Assert.Equal(ref1, picked);
+    }
+
+    // TryParseAssemblyShortName pulls the short name out of a JetBrains
+    // IAssembly.FullAssemblyName identity string. Used by the plan-B csproj
+    // wildcard resolver to know which `<Reference Include="path/*.dll">` items
+    // to glob-match. Wrapping System.Reflection.AssemblyName means future
+    // identity-string evolution tracks the BCL parser instead of needing a
+    // custom regex.
+
+    [Fact]
+    public void TryParseAssemblyShortName_returns_short_name_for_full_identity()
+    {
+        string? name = IlSpyExternalSourcesProviderHelpers.TryParseAssemblyShortName(
+            "Assembly-CSharp, Version=1.6.9438.37837, Culture=neutral, PublicKeyToken=null");
+        Assert.Equal("Assembly-CSharp", name);
+    }
+
+    [Fact]
+    public void TryParseAssemblyShortName_returns_short_name_for_bare_name()
+    {
+        string? name = IlSpyExternalSourcesProviderHelpers.TryParseAssemblyShortName("Assembly-CSharp");
+        Assert.Equal("Assembly-CSharp", name);
+    }
+
+    [Fact]
+    public void TryParseAssemblyShortName_returns_null_for_null_or_empty()
+    {
+        Assert.Null(IlSpyExternalSourcesProviderHelpers.TryParseAssemblyShortName(null));
+        Assert.Null(IlSpyExternalSourcesProviderHelpers.TryParseAssemblyShortName(""));
+    }
+
+    [Fact]
+    public void TryParseAssemblyShortName_returns_null_for_unparseable_input()
+    {
+        // System.Reflection.AssemblyName throws on a stray version-only fragment.
+        string? name = IlSpyExternalSourcesProviderHelpers.TryParseAssemblyShortName(", Version=1.0");
+        Assert.Null(name);
+    }
+
+    // EnumerateCsprojReferenceCandidates is the plan-B reader that bypasses
+    // Rider's MSBuild-resolved reference graph (which dedups to a single
+    // reference per assembly identity) and walks raw csproj XML to find
+    // wildcard `<Reference Include="path/*.dll">` impl candidates. Tests
+    // drive it via IO seams so the cases don't touch the disk.
+
+    [Fact]
+    public void EnumerateCsprojReferenceCandidates_finds_wildcard_match_for_target_assembly()
+    {
+        // Simulates the RimWorld-mod csproj shape: three platform-keyed
+        // `<Reference Include="abs/path/*.dll">` items, one per OS, each
+        // Condition-gated on its directory existing. The impl directory on
+        // the running machine has Assembly-CSharp.dll plus many unrelated DLLs.
+        const string csproj = @"<Project Sdk=""Microsoft.NET.Sdk"">
+  <ItemGroup>
+    <Reference Include=""C:\\RimWorld\\RimWorldWin64_Data\\Managed\\*.dll"" Condition=""Exists('C:\\RimWorld')"" />
+    <Reference Include=""/mnt/games/RimWorld/RimWorldLinux_Data/Managed/*.dll"" Condition=""Exists('/mnt/games/RimWorld')"" />
+    <Reference Include=""/Applications/RimWorld.app/Managed/*.dll"" Condition=""Exists('/Applications')"" />
+  </ItemGroup>
+</Project>";
+        Dictionary<string, IEnumerable<string>> globReplies = new()
+        {
+            ["/mnt/games/RimWorld/RimWorldLinux_Data/Managed"] = new[]
+            {
+                "/mnt/games/RimWorld/RimWorldLinux_Data/Managed/Assembly-CSharp.dll",
+            },
+        };
+
+        IReadOnlyList<string> matches = IlSpyExternalSourcesProviderHelpers.EnumerateCsprojReferenceCandidates(
+            csprojPath: "/repo/My.csproj",
+            assemblyShortName: "Assembly-CSharp",
+            readAllText: _ => csproj,
+            enumerateFiles: (dir, pat) => globReplies.TryGetValue(dir, out IEnumerable<string>? hits) ? hits : Array.Empty<string>());
+
+        Assert.Single(matches);
+        Assert.Equal("/mnt/games/RimWorld/RimWorldLinux_Data/Managed/Assembly-CSharp.dll", matches[0]);
+    }
+
+    [Fact]
+    public void EnumerateCsprojReferenceCandidates_returns_multiple_matches_when_multiple_dirs_have_target()
+    {
+        const string csproj = @"<Project Sdk=""Microsoft.NET.Sdk"">
+  <ItemGroup>
+    <Reference Include=""/games/RimWorldA/Managed/*.dll"" />
+    <Reference Include=""/games/RimWorldB/Managed/*.dll"" />
+  </ItemGroup>
+</Project>";
+        Dictionary<string, IEnumerable<string>> globReplies = new()
+        {
+            ["/games/RimWorldA/Managed"] = new[] { "/games/RimWorldA/Managed/Assembly-CSharp.dll" },
+            ["/games/RimWorldB/Managed"] = new[] { "/games/RimWorldB/Managed/Assembly-CSharp.dll" },
+        };
+
+        IReadOnlyList<string> matches = IlSpyExternalSourcesProviderHelpers.EnumerateCsprojReferenceCandidates(
+            csprojPath: "/repo/My.csproj",
+            assemblyShortName: "Assembly-CSharp",
+            readAllText: _ => csproj,
+            enumerateFiles: (dir, pat) => globReplies.TryGetValue(dir, out IEnumerable<string>? hits) ? hits : Array.Empty<string>());
+
+        Assert.Equal(2, matches.Count);
+    }
+
+    [Fact]
+    public void EnumerateCsprojReferenceCandidates_returns_literal_hint_path_match()
+    {
+        const string csproj = @"<Project Sdk=""Microsoft.NET.Sdk"">
+  <ItemGroup>
+    <Reference Include=""Assembly-CSharp"">
+      <HintPath>/games/RimWorld/Managed/Assembly-CSharp.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>";
+
+        IReadOnlyList<string> matches = IlSpyExternalSourcesProviderHelpers.EnumerateCsprojReferenceCandidates(
+            csprojPath: "/repo/My.csproj",
+            assemblyShortName: "Assembly-CSharp",
+            readAllText: _ => csproj,
+            enumerateFiles: (_, _) => Array.Empty<string>());
+
+        Assert.Single(matches);
+        Assert.Equal("/games/RimWorld/Managed/Assembly-CSharp.dll", matches[0]);
+    }
+
+    [Fact]
+    public void EnumerateCsprojReferenceCandidates_skips_references_with_msbuild_variables()
+    {
+        // The helper doesn't evaluate MSBuild $(...) / %(...) variables. The
+        // matching item with a literal absolute path still wins.
+        const string csproj = @"<Project Sdk=""Microsoft.NET.Sdk"">
+  <ItemGroup>
+    <Reference Include=""$(RimWorldPath)/Managed/*.dll"" />
+    <Reference Include=""/games/RimWorld/Managed/*.dll"" />
+  </ItemGroup>
+</Project>";
+        Dictionary<string, IEnumerable<string>> globReplies = new()
+        {
+            ["/games/RimWorld/Managed"] = new[] { "/games/RimWorld/Managed/Assembly-CSharp.dll" },
+        };
+
+        IReadOnlyList<string> matches = IlSpyExternalSourcesProviderHelpers.EnumerateCsprojReferenceCandidates(
+            csprojPath: "/repo/My.csproj",
+            assemblyShortName: "Assembly-CSharp",
+            readAllText: _ => csproj,
+            enumerateFiles: (dir, pat) => globReplies.TryGetValue(dir, out IEnumerable<string>? hits) ? hits : Array.Empty<string>());
+
+        Assert.Single(matches);
+        Assert.Equal("/games/RimWorld/Managed/Assembly-CSharp.dll", matches[0]);
+    }
+
+    [Fact]
+    public void EnumerateCsprojReferenceCandidates_returns_empty_when_no_reference_matches_target()
+    {
+        const string csproj = @"<Project Sdk=""Microsoft.NET.Sdk"">
+  <ItemGroup>
+    <Reference Include=""/games/RimWorld/Managed/Some.Other.Assembly.dll"" />
+  </ItemGroup>
+</Project>";
+
+        IReadOnlyList<string> matches = IlSpyExternalSourcesProviderHelpers.EnumerateCsprojReferenceCandidates(
+            csprojPath: "/repo/My.csproj",
+            assemblyShortName: "Assembly-CSharp",
+            readAllText: _ => csproj,
+            enumerateFiles: (_, _) => Array.Empty<string>());
+
+        Assert.Empty(matches);
+    }
+
+    [Fact]
+    public void EnumerateCsprojReferenceCandidates_returns_empty_when_glob_dir_does_not_exist()
+    {
+        // EnumerateFiles on a missing directory throws DirectoryNotFoundException;
+        // the helper swallows it and yields no matches.
+        const string csproj = @"<Project Sdk=""Microsoft.NET.Sdk"">
+  <ItemGroup>
+    <Reference Include=""/nonexistent/Managed/*.dll"" />
+  </ItemGroup>
+</Project>";
+
+        IReadOnlyList<string> matches = IlSpyExternalSourcesProviderHelpers.EnumerateCsprojReferenceCandidates(
+            csprojPath: "/repo/My.csproj",
+            assemblyShortName: "Assembly-CSharp",
+            readAllText: _ => csproj,
+            enumerateFiles: (_, _) => throw new DirectoryNotFoundException("test directory missing"));
+
+        Assert.Empty(matches);
+    }
+
+    [Fact]
+    public void EnumerateCsprojReferenceCandidates_returns_empty_when_csproj_unreadable()
+    {
+        IReadOnlyList<string> matches = IlSpyExternalSourcesProviderHelpers.EnumerateCsprojReferenceCandidates(
+            csprojPath: "/repo/My.csproj",
+            assemblyShortName: "Assembly-CSharp",
+            readAllText: _ => throw new IOException("test read failure"),
+            enumerateFiles: (_, _) => Array.Empty<string>());
+
+        Assert.Empty(matches);
+    }
+
+    [Fact]
+    public void EnumerateCsprojReferenceCandidates_returns_empty_when_csproj_malformed_xml()
+    {
+        IReadOnlyList<string> matches = IlSpyExternalSourcesProviderHelpers.EnumerateCsprojReferenceCandidates(
+            csprojPath: "/repo/My.csproj",
+            assemblyShortName: "Assembly-CSharp",
+            readAllText: _ => "<Project><not-closed",
+            enumerateFiles: (_, _) => Array.Empty<string>());
+
+        Assert.Empty(matches);
+    }
+
+    [Fact]
+    public void EnumerateCsprojReferenceCandidates_overrides_wildcard_to_specific_target_filename()
+    {
+        // The helper passes the exact `{assemblyShortName}.dll` to enumerateFiles
+        // rather than echoing the user's `*.dll` glob, so it doesn't return
+        // hundreds of unrelated DLLs from the same Managed/ folder.
+        string? observedPattern = null;
+        IlSpyExternalSourcesProviderHelpers.EnumerateCsprojReferenceCandidates(
+            csprojPath: "/repo/My.csproj",
+            assemblyShortName: "Assembly-CSharp",
+            readAllText: _ => @"<Project><ItemGroup><Reference Include=""/games/Managed/*.dll"" /></ItemGroup></Project>",
+            enumerateFiles: (_, pat) => { observedPattern = pat; return Array.Empty<string>(); });
+
+        Assert.Equal("Assembly-CSharp.dll", observedPattern);
+    }
+
+    [Fact]
+    public void EnumerateCsprojReferenceCandidates_returns_empty_for_null_or_empty_inputs()
+    {
+        Assert.Empty(IlSpyExternalSourcesProviderHelpers.EnumerateCsprojReferenceCandidates(
+            csprojPath: "", assemblyShortName: "X", readAllText: _ => "", enumerateFiles: (_, _) => Array.Empty<string>()));
+        Assert.Empty(IlSpyExternalSourcesProviderHelpers.EnumerateCsprojReferenceCandidates(
+            csprojPath: "/x.csproj", assemblyShortName: "", readAllText: _ => "", enumerateFiles: (_, _) => Array.Empty<string>()));
+    }
+
     // ParseExtraSearchDirs is the split-and-accumulate wrapper around
     // TryNormalizeSearchDir. Lives in the helpers class so the wiring
     // (delimiter, accumulator, warn-on-rejection) is unit-testable without

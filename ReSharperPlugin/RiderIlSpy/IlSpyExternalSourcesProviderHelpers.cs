@@ -7,6 +7,7 @@ using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
 using System.Text;
+using System.Xml.Linq;
 using ICSharpCode.Decompiler.CSharp;
 using ICSharpCode.Decompiler.Metadata;
 
@@ -55,6 +56,205 @@ internal static class IlSpyExternalSourcesProviderHelpers
     {
         if (string.IsNullOrEmpty(fullPath)) return false;
         return fullPath.Contains("/ref/") || fullPath.Contains("\\ref\\") || fullPath.Contains(".ref/");
+    }
+
+    /// <summary>
+    /// Picks the best on-disk impl candidate from a sequence of raw path
+    /// strings (typically HintPaths read from csproj <c>&lt;Reference&gt;</c>
+    /// items via <c>IProjectToAssemblyReference.ReferenceTarget.HintLocation</c>).
+    /// Always prefers an existing non-ref candidate. When no impl exists, the
+    /// fallback depends on <paramref name="allowRefAssemblies"/>:
+    /// <list type="bullet">
+    ///   <item><description>true (default): returns the first existing ref candidate so the navigation pipeline can still surface SOMETHING.</description></item>
+    ///   <item><description>false: returns null, letting the caller defer the navigation to a peer provider (e.g. Rider's built-in dotPeek) rather than emit ILSpy's empty-body stub output for a ref-only assembly.</description></item>
+    /// </list>
+    /// Returns null when nothing exists on disk regardless of the flag.
+    /// </summary>
+    /// <remarks>
+    /// Extracted as a pure helper so the impl-preferred-over-ref selection
+    /// logic from <c>IlSpyExternalSourcesProvider.ResolveAssemblyFile</c> can
+    /// be regression-tested without standing up a JetBrains IAssembly. Takes
+    /// raw strings (not FileSystemPath) so the test can use a file-existence
+    /// callback and avoid touching the disk. The <paramref name="allowRefAssemblies"/>
+    /// default preserves the pre-setting behavior for any caller that hasn't
+    /// been threaded with the user's <c>DecompileReferenceAssemblies</c> toggle.
+    /// </remarks>
+    public static string? PickImplPathFromCandidates(
+        IEnumerable<string?> candidatePaths,
+        Func<string, bool> fileExists,
+        bool allowRefAssemblies = true)
+    {
+        if (candidatePaths == null) return null;
+        string? firstExistingRef = null;
+        foreach (string? raw in candidatePaths)
+        {
+            if (string.IsNullOrEmpty(raw)) continue;
+            if (!fileExists(raw!)) continue;
+            if (!IsRefAssemblyPath(raw!)) return raw;
+            if (firstExistingRef == null) firstExistingRef = raw;
+        }
+        return allowRefAssemblies ? firstExistingRef : null;
+    }
+
+    /// <summary>
+    /// Parses the assembly short name out of a JetBrains <c>IAssembly.FullAssemblyName</c>
+    /// (the standard <c>Name, Version=v, Culture=c, PublicKeyToken=t</c> identity string).
+    /// Returns null when the input is empty or unparseable so callers can short-circuit
+    /// the csproj-wildcard pass without an exception.
+    /// </summary>
+    /// <remarks>
+    /// Pure helper extracted so the parse is unit-testable without standing up an
+    /// IAssembly. Uses <see cref="System.Reflection.AssemblyName"/> rather than a
+    /// hand-rolled comma split so any future identity-string evolution (versioned
+    /// suffixes, ContentType, etc.) tracks the BCL parser instead of needing a
+    /// custom regex.
+    /// </remarks>
+    public static string? TryParseAssemblyShortName(string? fullAssemblyName)
+    {
+        if (string.IsNullOrEmpty(fullAssemblyName)) return null;
+        try
+        {
+            string? name = new System.Reflection.AssemblyName(fullAssemblyName!).Name;
+            return string.IsNullOrEmpty(name) ? null : name;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads <paramref name="csprojPath"/> as XML, walks every <c>&lt;Reference&gt;</c>
+    /// item (regardless of MSBuild XML namespace), and returns the absolute filesystem
+    /// paths whose basename matches <paramref name="assemblyShortName"/><c>.dll</c>
+    /// (case-insensitive). Resolves both the <c>Include</c> attribute and the nested
+    /// <c>&lt;HintPath&gt;</c> child as path candidates, expands a single-segment
+    /// wildcard (<c>*</c> / <c>?</c>) in the file portion via <paramref name="enumerateFiles"/>,
+    /// and silently skips entries that contain unresolved MSBuild variables
+    /// (<c>$(...)</c> / <c>%(...)</c>) since this helper does not evaluate them.
+    /// </summary>
+    /// <remarks>
+    /// Exists because <c>IModuleReferencesResolveStore.GetReferencesToAssemblyForAllContexts</c>
+    /// only surfaces MSBuild's deduped resolved view of the references — a single
+    /// reference per assembly identity, which means when a project's csproj points at
+    /// both a publicised ref pack (NuGet) and a local impl directory (e.g. game install)
+    /// via wildcard <c>Include="path/*.dll"</c> items, only the NuGet ref reaches
+    /// Rider's resolved reference graph. Decompiling that ref yields empty-body stubs.
+    /// Going back to the raw csproj XML is the only way to find the impl candidate
+    /// that the user explicitly listed but that MSBuild collapsed away.
+    ///
+    /// Takes IO seams (<paramref name="readAllText"/>, <paramref name="enumerateFiles"/>)
+    /// so tests can drive the parse without touching the filesystem.
+    /// </remarks>
+    public static IReadOnlyList<string> EnumerateCsprojReferenceCandidates(
+        string csprojPath,
+        string assemblyShortName,
+        Func<string, string> readAllText,
+        Func<string, string, IEnumerable<string>> enumerateFiles)
+    {
+        if (string.IsNullOrEmpty(csprojPath) || string.IsNullOrEmpty(assemblyShortName))
+            return Array.Empty<string>();
+
+        string xml;
+        try
+        {
+            xml = readAllText(csprojPath);
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+
+        XDocument doc;
+        try
+        {
+            doc = XDocument.Parse(xml);
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+
+        string csprojDir = Path.GetDirectoryName(csprojPath) ?? string.Empty;
+        string expectedFileName = assemblyShortName + ".dll";
+        List<string> matches = new List<string>();
+
+        foreach (XElement referenceElement in doc.Descendants().Where(e => e.Name.LocalName == "Reference"))
+        {
+            foreach (string rawPath in ExtractReferencePathCandidates(referenceElement))
+            {
+                if (ContainsUnresolvedMsbuildVariable(rawPath)) continue;
+                string absolute = MakeAbsoluteRelativeTo(csprojDir, rawPath);
+                foreach (string match in ResolveCandidateToExistingFiles(absolute, expectedFileName, enumerateFiles))
+                {
+                    matches.Add(match);
+                }
+            }
+        }
+        return matches;
+    }
+
+    private static IEnumerable<string> ExtractReferencePathCandidates(XElement referenceElement)
+    {
+        string? include = referenceElement.Attribute("Include")?.Value;
+        if (LooksLikeFilePath(include))
+            yield return include!;
+
+        foreach (XElement child in referenceElement.Elements())
+        {
+            if (child.Name.LocalName != "HintPath") continue;
+            string? value = child.Value;
+            if (!string.IsNullOrEmpty(value)) yield return value!;
+        }
+    }
+
+    private static bool LooksLikeFilePath(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return false;
+        return s!.Contains('/') || s.Contains('\\')
+            || s.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+            || s.Contains('*') || s.Contains('?');
+    }
+
+    private static bool ContainsUnresolvedMsbuildVariable(string path)
+        => path.Contains("$(") || path.Contains("%(");
+
+    private static string MakeAbsoluteRelativeTo(string baseDir, string maybeRelative)
+    {
+        if (Path.IsPathRooted(maybeRelative)) return maybeRelative;
+        if (string.IsNullOrEmpty(baseDir)) return maybeRelative;
+        try { return Path.GetFullPath(Path.Combine(baseDir, maybeRelative)); }
+        catch { return maybeRelative; }
+    }
+
+    private static IReadOnlyList<string> ResolveCandidateToExistingFiles(
+        string absolutePath,
+        string expectedFileName,
+        Func<string, string, IEnumerable<string>> enumerateFiles)
+    {
+        if (string.IsNullOrEmpty(absolutePath)) return Array.Empty<string>();
+        string dir = Path.GetDirectoryName(absolutePath) ?? string.Empty;
+        string filePart = Path.GetFileName(absolutePath);
+        if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(filePart)) return Array.Empty<string>();
+
+        if (filePart.Contains('*') || filePart.Contains('?'))
+        {
+            // Override the user's glob to the specific expected file so a
+            // wildcard like "*.dll" doesn't return hundreds of unrelated DLLs.
+            try
+            {
+                return enumerateFiles(dir, expectedFileName).ToList();
+            }
+            catch
+            {
+                return Array.Empty<string>();
+            }
+        }
+
+        if (string.Equals(filePart, expectedFileName, StringComparison.OrdinalIgnoreCase))
+            return new[] { absolutePath };
+
+        return Array.Empty<string>();
     }
 
     /// <summary>

@@ -118,6 +118,16 @@
     <value>C# 7.3</value>
   </data>
 
+  <data name="OptionsPage_Header_ReferenceAssemblies" xml:space="preserve">
+    <value>Reference assemblies</value>
+  </data>
+  <data name="OptionsPage_ReferenceAssemblies_Comment" xml:space="preserve">
+    <value>Reference assemblies (NuGet ref packs, publicised wrappers, compile-time refs in `/ref/` directories) carry no method bodies, so decompiling one produces empty-body stubs. By default ILSpy steps back when a navigation target resolves only to a ref assembly, letting Rider's built-in decompiler take the navigation. Enable to opt back into ILSpy decompilation for ref-only assemblies.</value>
+  </data>
+  <data name="OptionsPage_DecompileReferenceAssemblies_Label" xml:space="preserve">
+    <value>Decompile reference assemblies (ref packs / publicised wrappers)</value>
+  </data>
+
   <data name="OptionsPage_Header_SourceLink" xml:space="preserve">
     <value>SourceLink</value>
   </data>
