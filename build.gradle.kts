@@ -140,6 +140,7 @@ tasks.named("compileKotlin") {
 
 val dotNetSrcDir = layout.projectDirectory.dir("ReSharperPlugin")
 val resharperPluginBin = dotNetSrcDir.dir("RiderIlSpy/bin/Release")
+val resharperEngineBin = dotNetSrcDir.dir("RiderIlSpy.Engine/bin/Release")
 val outputAssemblyName = "RiderIlSpy"
 
 val buildReSharperPlugin by tasks.registering(Exec::class) {
@@ -160,7 +161,20 @@ tasks.withType<PrepareSandboxTask>().configureEach {
     from(resharperPluginBin) {
         include("$outputAssemblyName.dll")
         include("$outputAssemblyName.pdb")
+        include("$outputAssemblyName.Contracts.dll")
+        include("$outputAssemblyName.Contracts.pdb")
         into("${intellijPlatform.projectName.get()}/dotnet")
+    }
+    // The engine + its private decompiler/SRM/SCI copies go into a subdirectory
+    // so Rider's plugin loader never scans them into the default load context —
+    // IlSpyEngineHost loads them through IlSpyEngineLoadContext instead.
+    from(resharperEngineBin) {
+        include("$outputAssemblyName.Engine.dll")
+        include("$outputAssemblyName.Engine.pdb")
+        include("ICSharpCode.Decompiler.dll")
+        include("System.Reflection.Metadata.dll")
+        include("System.Collections.Immutable.dll")
+        into("${intellijPlatform.projectName.get()}/dotnet/engine")
     }
 }
 
@@ -187,6 +201,9 @@ tasks.withType<Test>().configureEach {
 }
 
 tasks.withType<RunIdeTask>().configureEach {
+    // Smoke-test convenience: `./gradlew runIde -PideSolution=/path/to/My.sln`
+    // boots the sandbox straight into a solution instead of the welcome screen.
+    (project.findProperty("ideSolution") as String?)?.let { args(it) }
     if (jbrRoot != null) {
         javaLauncher.set(javaToolchains.launcherFor {
             languageVersion.set(JavaLanguageVersion.of(25))

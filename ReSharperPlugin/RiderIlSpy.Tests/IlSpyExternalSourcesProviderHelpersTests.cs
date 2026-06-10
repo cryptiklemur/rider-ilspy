@@ -124,7 +124,7 @@ public class IlSpyExternalSourcesProviderHelpersTests
     {
         // ICSharpCode.Decompiler 8.2 is referenced — version must resolve to
         // something non-empty (either a 3-part version or the "unknown" sentinel).
-        string v = IlSpyExternalSourcesProviderHelpers.GetDecompilerVersion();
+        string v = AssemblyBannerReader.GetDecompilerVersion();
         Assert.False(string.IsNullOrEmpty(v));
     }
 
@@ -219,7 +219,7 @@ public class IlSpyExternalSourcesProviderHelpersTests
         string asmPath = typeof(IlSpyExternalSourcesProviderHelpersTests).Assembly.Location;
         Assert.True(File.Exists(asmPath));
 
-        AssemblyBannerMetadata? meta = IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata(asmPath);
+        AssemblyBannerMetadata? meta = AssemblyBannerReader.ReadAssemblyBannerMetadata(asmPath);
 
         Assert.NotNull(meta);
         Assert.False(string.IsNullOrEmpty(meta!.Name));
@@ -235,7 +235,7 @@ public class IlSpyExternalSourcesProviderHelpersTests
     public void ReadAssemblyBannerMetadata_returns_null_for_nonexistent_path()
     {
         string fake = Path.Combine(Path.GetTempPath(), "RiderIlSpyTests-banner-" + Guid.NewGuid().ToString("N") + ".dll");
-        Assert.Null(IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata(fake));
+        Assert.Null(AssemblyBannerReader.ReadAssemblyBannerMetadata(fake));
     }
 
     [Fact]
@@ -245,7 +245,7 @@ public class IlSpyExternalSourcesProviderHelpersTests
         File.WriteAllText(fake, "definitely not a PE");
         try
         {
-            Assert.Null(IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata(fake));
+            Assert.Null(AssemblyBannerReader.ReadAssemblyBannerMetadata(fake));
         }
         finally
         {

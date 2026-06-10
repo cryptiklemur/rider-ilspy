@@ -18,7 +18,7 @@ public class IlSpyDecompilerHelpersTests
         {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         };
-        string token = IlSpyExternalSourcesProviderHelpers.ComputePublicKeyToken(mscorlibPublicKey);
+        string token = AssemblyBannerReader.ComputePublicKeyToken(mscorlibPublicKey);
         Assert.Equal(16, token.Length);
         foreach (char c in token)
         {
@@ -30,7 +30,7 @@ public class IlSpyDecompilerHelpersTests
     public void ComputePublicKeyToken_is_deterministic()
     {
         byte[] key = new byte[] { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
-        Assert.Equal(IlSpyExternalSourcesProviderHelpers.ComputePublicKeyToken(key), IlSpyExternalSourcesProviderHelpers.ComputePublicKeyToken(key));
+        Assert.Equal(AssemblyBannerReader.ComputePublicKeyToken(key), AssemblyBannerReader.ComputePublicKeyToken(key));
     }
 
     [Fact]
@@ -38,6 +38,6 @@ public class IlSpyDecompilerHelpersTests
     {
         byte[] keyA = new byte[] { 0x01, 0x02, 0x03 };
         byte[] keyB = new byte[] { 0x01, 0x02, 0x04 };
-        Assert.NotEqual(IlSpyExternalSourcesProviderHelpers.ComputePublicKeyToken(keyA), IlSpyExternalSourcesProviderHelpers.ComputePublicKeyToken(keyB));
+        Assert.NotEqual(AssemblyBannerReader.ComputePublicKeyToken(keyA), AssemblyBannerReader.ComputePublicKeyToken(keyB));
     }
 }

@@ -17,39 +17,11 @@ using ICSharpCode.Decompiler.Documentation;
 using ICSharpCode.Decompiler.IL;
 using ICSharpCode.Decompiler.Metadata;
 using ICSharpCode.Decompiler.TypeSystem;
-using JetBrains.Application;
-using JetBrains.Util;
-using JetBrains.Util.Logging;
 
 namespace RiderIlSpy;
 
-/// <summary>
-/// Identity metadata read directly from an assembly's CLI header — used by the
-/// diagnostic banner. Mirrors the fields surfaced by the JetBrains decompiler banner
-/// (Assembly identity, MVID, target framework, file size).
-/// </summary>
-/// <param name="Name">Simple assembly name (no version, no culture suffix).</param>
-/// <param name="Version">Four-part assembly version string.</param>
-/// <param name="Culture">Culture name; "neutral" when unset.</param>
-/// <param name="PublicKeyToken">Lowercase hex token computed from the SHA1 of the
-/// public key per ECMA-335 II.6.3, or "null" for unsigned assemblies.</param>
-/// <param name="Mvid">Module Version Id, uppercased "D" Guid format.</param>
-/// <param name="FileSize">Length of the PE file on disk, in bytes; 0 if unreadable.</param>
-/// <param name="TargetFramework">TFM moniker (e.g. ".NETCoreApp,Version=v8.0"); "unknown" if absent.</param>
-public sealed record AssemblyBannerMetadata(
-    string Name,
-    string Version,
-    string Culture,
-    string PublicKeyToken,
-    string Mvid,
-    long FileSize,
-    string TargetFramework);
-
-[ShellComponent]
 public class IlSpyDecompiler
 {
-    private static readonly ILogger ourLogger = Logger.GetLogger<IlSpyDecompiler>();
-
     public DecompileResult DecompileType(string assemblyPath, string typeFullName, DecompilerSettings settings, IReadOnlyList<string>? extraSearchDirs = null, IlSpyOutputMode mode = IlSpyOutputMode.CSharp)
     {
         try
@@ -185,15 +157,12 @@ public class IlSpyDecompiler
             Directory.CreateDirectory(targetDirectory);
             using PEFile module = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage, MetadataReaderOptions.Default);
             UniversalAssemblyResolver resolver = BuildResolver(assemblyPath, module, settings, extraSearchDirs);
-            // 4-arg ctor is the only one that accepts custom DecompilerSettings — the
-            // single-arg ctor builds its own defaults and exposes Settings as get-only.
-            // ICSharpCode.Decompiler 10.x added an IProjectFileWriter slot in position 3
-            // but Rider 2026.1 ships 8.2.x at runtime, so we MUST use the 8.2-shape ctor
-            // here. Bumping the package without verifying Rider's bundled version led
-            // to a MissingMethodException; see the csproj comment for the full story.
+            // The multi-arg ctor is the only one that accepts custom DecompilerSettings —
+            // the single-arg ctor builds its own defaults and exposes Settings as get-only.
             WholeProjectDecompiler projectDecompiler = new WholeProjectDecompiler(
                 settings,
                 resolver,
+                projectWriter: null,
                 assemblyReferenceClassifier: null,
                 debugInfoProvider: null);
             projectDecompiler.DecompileProject(module, targetDirectory, cancellationToken);

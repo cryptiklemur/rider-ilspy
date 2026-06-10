@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using ICSharpCode.Decompiler;
 
 namespace RiderIlSpy;
 
@@ -13,7 +12,7 @@ namespace RiderIlSpy;
 /// slice the configuration unpredictably.
 /// </summary>
 /// <param name="Mode">Effective output mode — rd-live value preferred, persisted setting fallback.</param>
-/// <param name="DecompilerSettings">Fully populated ICSharpCode.Decompiler settings including language-version downgrade.</param>
+/// <param name="DecompilerOptions">SDK-free decompiler option mirror including language-version downgrade; the engine converts it to ICSharpCode DecompilerSettings on its side of the load-context boundary.</param>
 /// <param name="ExtraSearchDirs">Normalized assembly-resolve directories (rejected entries already filtered + logged).</param>
 /// <param name="ShowBanner">Whether to prepend the diagnostic banner to ILSpy output (no-op when content came from SourceLink).</param>
 /// <param name="PreferSourceLink">Whether to attempt SourceLink before falling back to ILSpy decompilation.</param>
@@ -21,7 +20,7 @@ namespace RiderIlSpy;
 /// <param name="DecompileReferenceAssemblies">When false, the provider refuses to resolve to a ref-only assembly (paths with the SDK `/ref/` marker). The navigation falls through to Rider's built-in decompiler instead of producing ILSpy's empty-body stub output. When true, refs are allowed as fallback when no impl candidate exists.</param>
 public sealed record IlSpyRequestSettings(
     IlSpyOutputMode Mode,
-    DecompilerSettings DecompilerSettings,
+    IlSpyDecompilerOptions DecompilerOptions,
     IReadOnlyList<string> ExtraSearchDirs,
     bool ShowBanner,
     bool PreferSourceLink,

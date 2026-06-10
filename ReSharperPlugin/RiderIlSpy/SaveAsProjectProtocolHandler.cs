@@ -14,12 +14,12 @@ namespace RiderIlSpy;
 
 /// <summary>
 /// [SolutionComponent] that subscribes to <see cref="RiderIlSpyModel.SaveAsProject"/>
-/// and delegates to <see cref="IlSpyDecompiler.DecompileAssemblyToProject"/>. Lives
+/// and delegates to <see cref="IIlSpyEngine.DecompileAssemblyToProject"/>. Lives
 /// in its own component (rather than the navigation provider) because the
 /// "Save Decompiled Assembly as Project..." flow is its own subsystem — it has
 /// its own rd contract (<see cref="SaveAsProjectRequest"/> /
 /// <see cref="SaveAsProjectResponse"/>), its own error model, and consumes a
-/// different IlSpyDecompiler API than the navigation surface. Keeping it
+/// different engine API than the navigation surface. Keeping it
 /// alongside <see cref="IlSpyExternalSourcesProvider"/> previously meant the
 /// provider's ctor wired one orthogonal rd handler, which muddied the
 /// provider's responsibility.
@@ -35,16 +35,16 @@ public sealed class SaveAsProjectProtocolHandler
 {
     private static readonly ILogger ourLogger = Logger.GetLogger<SaveAsProjectProtocolHandler>();
 
-    private readonly IlSpyDecompiler myDecompiler;
+    private readonly IIlSpyEngine myEngine;
     private readonly IlSpyRequestSettingsBuilder mySettingsBuilder;
 
     public SaveAsProjectProtocolHandler(
         Lifetime lifetime,
         ISolution solution,
         ISettingsStore settingsStore,
-        IlSpyDecompiler decompiler)
+        IlSpyEngineHost engineHost)
     {
-        myDecompiler = decompiler;
+        myEngine = engineHost.Engine;
         IContextBoundSettingsStoreLive boundSettings = settingsStore.BindToContextLive(lifetime, ContextRange.ApplicationWide);
         mySettingsBuilder = new IlSpyRequestSettingsBuilder(boundSettings, ourLogger);
         RiderIlSpyModel model = solution.GetProtocolSolution().GetRiderIlSpyModel();
@@ -57,13 +57,13 @@ public sealed class SaveAsProjectProtocolHandler
         {
             // SaveAsProject doesn't honor the rd-live mode toggle — it always
             // emits a full C# project. So we pass IlSpyOutputMode.CSharp as the
-            // snapshot's Mode; only DecompilerSettings + ExtraSearchDirs are
+            // snapshot's Mode; only DecompilerOptions + ExtraSearchDirs are
             // consumed by DecompileAssemblyToProject.
             IlSpyRequestSettings snapshot = mySettingsBuilder.Snapshot(IlSpyOutputMode.CSharp);
-            DecompileAssemblyToProjectResult result = myDecompiler.DecompileAssemblyToProject(
+            DecompileAssemblyToProjectResult result = myEngine.DecompileAssemblyToProject(
                 request.AssemblyPath,
                 request.TargetDirectory,
-                snapshot.DecompilerSettings,
+                snapshot.DecompilerOptions,
                 snapshot.ExtraSearchDirs,
                 CancellationToken.None);
             if (!result.Success)

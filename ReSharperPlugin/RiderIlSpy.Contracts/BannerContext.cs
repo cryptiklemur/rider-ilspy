@@ -22,9 +22,13 @@ namespace RiderIlSpy;
 /// <param name="ExtraSearchDirs">Extra assembly search dirs passed to the
 /// resolver. Each entry is redacted in the banner; empty list renders as
 /// <c>(none)</c>.</param>
+/// <param name="DecompilerVersion">Version of the engine's ICSharpCode.Decompiler,
+/// shown on the banner's first line. Supplied by the engine (the host assembly
+/// has no ICSharpCode reference to read it from).</param>
 public sealed record BannerContext(
     AssemblyBannerMetadata? Meta,
     string AssemblyPath,
     string TypeFullName,
     IlSpyOutputMode Mode,
-    IReadOnlyList<string> ExtraSearchDirs);
+    IReadOnlyList<string> ExtraSearchDirs,
+    string DecompilerVersion = "unknown");

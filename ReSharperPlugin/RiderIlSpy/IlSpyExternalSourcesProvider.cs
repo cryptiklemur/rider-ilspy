@@ -51,7 +51,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     private static readonly ILogger ourLogger = Logger.GetLogger<IlSpyExternalSourcesProvider>();
 
     private readonly INavigationDecompilationCache myCache;
-    private readonly IlSpyDecompiler myDecompiler;
+    private readonly IIlSpyEngine myEngine;
     private readonly IlSpySourceLinkGateway mySourceLinkGateway;
     private readonly IContextBoundSettingsStoreLive mySettings;
     private readonly IShellLocks myShellLocks;
@@ -74,13 +74,13 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         ISolution solution,
         ISettingsStore settingsStore,
         INavigationDecompilationCache cache,
-        IlSpyDecompiler decompiler,
+        IlSpyEngineHost engineHost,
         IlSpySourceLinkGateway sourceLinkGateway,
         IShellLocks shellLocks,
         IModuleReferencesResolveStore referencesResolveStore)
     {
         myCache = cache;
-        myDecompiler = decompiler;
+        myEngine = engineHost.Engine;
         mySourceLinkGateway = sourceLinkGateway;
         myShellLocks = shellLocks;
         myLifetime = lifetime;
@@ -508,7 +508,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
                 return new DecompileFetchOutcome(attempt.Content, FromSourceLink: true, outcome, Success: true, FailureReason: null, Methods: DecompileFetchOutcome.EmptyMethods);
             }
         }
-        DecompileResult decompile = myDecompiler.DecompileType(assemblyPath, typeFullName, request.DecompilerSettings, request.ExtraSearchDirs, request.Mode);
+        DecompileResult decompile = myEngine.DecompileType(assemblyPath, typeFullName, request.DecompilerOptions, request.ExtraSearchDirs, request.Mode);
         return new DecompileFetchOutcome(decompile.Content, FromSourceLink: false, outcome, decompile.Success, decompile.FailureReason, decompile.Methods);
     }
 
@@ -563,14 +563,12 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
         return result;
     }
 
-    // Banner-metadata seam that adds Warn-on-null logging around the SDK-free
-    // IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata helper.
-    // Inlined here (rather than living on IlSpyDecompiler) because the warning
-    // is a navigation-surface concern — the decompiler shouldn't grow a
-    // logging-only shim for a helper that doesn't touch ICSharpCode.Decompiler.
+    // Banner-metadata seam that adds Warn-on-null logging around the engine's
+    // metadata reader. The warning is a navigation-surface concern — the engine
+    // shouldn't grow a logging-only shim (and it has no JetBrains logger anyway).
     private AssemblyBannerMetadata? ReadBannerMetadata(string assemblyPath)
     {
-        AssemblyBannerMetadata? result = IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata(assemblyPath);
+        AssemblyBannerMetadata? result = myEngine.ReadAssemblyBannerMetadata(assemblyPath);
         if (result == null && File.Exists(assemblyPath))
             ourLogger.Warn("RiderIlSpy.ReadBannerMetadata returned null for " + assemblyPath);
         return result;
@@ -590,7 +588,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
     {
         if (!request.ShowBanner) return new BannerApplication(content, BannerLineCount: 0);
         AssemblyBannerMetadata? bannerMeta = ReadBannerMetadata(assemblyPath);
-        BannerContext bannerCtx = new BannerContext(bannerMeta, assemblyPath, typeFullName, request.Mode, request.ExtraSearchDirs);
+        BannerContext bannerCtx = new BannerContext(bannerMeta, assemblyPath, typeFullName, request.Mode, request.ExtraSearchDirs, myEngine.GetDecompilerVersion());
         string banner = IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(bannerCtx, sourceLinkOutcome);
         return new BannerApplication(banner + content, IlSpyExternalSourcesProviderHelpers.CountBannerLines(banner));
     }
@@ -736,7 +734,7 @@ public class IlSpyExternalSourcesProvider : IExternalSourcesProvider
                 // Decompilation is pure CPU work — keep it on the worker thread.
                 // The read lock is only needed for PutCacheItem below, which
                 // touches Rider's project-model-backed cache.
-                DecompileResult decompile = myDecompiler.DecompileType(entry.AssemblyFilePath, entry.TypeFullName, request.DecompilerSettings, request.ExtraSearchDirs, request.Mode);
+                DecompileResult decompile = myEngine.DecompileType(entry.AssemblyFilePath, entry.TypeFullName, request.DecompilerOptions, request.ExtraSearchDirs, request.Mode);
                 if (!decompile.Success)
                 {
                     // Skip overwriting the existing cache entry with a

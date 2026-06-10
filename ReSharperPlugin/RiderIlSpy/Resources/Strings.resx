@@ -102,6 +102,15 @@
   <data name="OptionsPage_LanguageVersion_Latest" xml:space="preserve">
     <value>Latest (default)</value>
   </data>
+  <data name="OptionsPage_LanguageVersion_CSharp14_0" xml:space="preserve">
+    <value>C# 14.0</value>
+  </data>
+  <data name="OptionsPage_LanguageVersion_CSharp13_0" xml:space="preserve">
+    <value>C# 13.0</value>
+  </data>
+  <data name="OptionsPage_LanguageVersion_CSharp12_0" xml:space="preserve">
+    <value>C# 12.0</value>
+  </data>
   <data name="OptionsPage_LanguageVersion_CSharp11_0" xml:space="preserve">
     <value>C# 11.0</value>
   </data>

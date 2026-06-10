@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>RiderIlSpy.Engine</AssemblyName>
+    <RootNamespace>RiderIlSpy</RootNamespace>
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <!--
+      Engine bin must contain ICSharpCode.Decompiler + System.Reflection.Metadata +
+      System.Collections.Immutable: the gradle packaging copies them next to
+      RiderIlSpy.Engine.dll, and IlSpyEngineLoadContext resolves the isolated set
+      from that directory at runtime.
+    -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RiderIlSpy.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RiderIlSpy.Contracts\RiderIlSpy.Contracts.csproj" />
+    <!--
+      This is OUR decompiler, isolated from Rider's bundled copy. Rider's
+      ReSharperHost ships ICSharpCode.Decompiler 8.2.x (max C# 11) plus
+      System.Reflection.Metadata / System.Collections.Immutable 8.0; this engine
+      assembly is loaded into a dedicated AssemblyLoadContext (IlSpyEngineLoadContext
+      in the host project) that serves these exact packages from the plugin
+      directory, so the host's older copies are never bound and never need to match.
+      Decompiler 10.x requires SRM/SCI >= 9.0.0 — keep the three versions in sync
+      with what the package's nuspec demands when bumping.
+    -->
+    <PackageReference Include="ICSharpCode.Decompiler" Version="10.1.0.8386" />
+    <PackageReference Include="System.Reflection.Metadata" Version="9.0.0" />
+    <PackageReference Include="System.Collections.Immutable" Version="9.0.0" />
+  </ItemGroup>
+
+</Project>

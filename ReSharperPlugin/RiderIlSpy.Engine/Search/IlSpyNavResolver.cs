@@ -20,21 +20,6 @@ using SequencePoint = ICSharpCode.Decompiler.DebugInfo.SequencePoint;
 
 namespace RiderIlSpy.Search;
 
-public sealed class IlSpyNavResolution
-{
-    public bool Success { get; init; }
-    public string FilePath { get; init; } = string.Empty;
-    public int Line { get; init; } = 1;
-    public int Column { get; init; } = 1;
-    public string ErrorMessage { get; init; } = string.Empty;
-
-    public static IlSpyNavResolution Failure(string message) =>
-        new() { Success = false, ErrorMessage = message };
-
-    public static IlSpyNavResolution Ok(string path, int line, int column) =>
-        new() { Success = true, FilePath = path, Line = line, Column = column };
-}
-
 public sealed class IlSpyNavResolver
 {
     private readonly string myCacheRoot;
@@ -113,7 +98,7 @@ public sealed class IlSpyNavResolver
 
         ITypeDefinition? typeDef = decompiler.TypeSystem.MainModule.GetDefinition(typeHandle);
         if (typeDef == null)
-            return IlSpyNavResolution.Failure(RiderIlSpy.Resources.Strings.NavResolver_TypeDefinitionNotFound);
+            return IlSpyNavResolution.Failure("type definition not found in type system");
 
         SyntaxTree tree = decompiler.DecompileType(typeDef.FullTypeName);
         string body = SyntaxTreeToString(tree, settings);
@@ -171,8 +156,8 @@ public sealed class IlSpyNavResolver
 
     private static string BuildBanner(string assemblyPath, string typeFullName, IlSpyOutputMode mode)
     {
-        AssemblyBannerMetadata? meta = IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata(assemblyPath);
-        BannerContext ctx = new(meta, assemblyPath, typeFullName, mode, Array.Empty<string>());
+        AssemblyBannerMetadata? meta = AssemblyBannerReader.ReadAssemblyBannerMetadata(assemblyPath);
+        BannerContext ctx = new(meta, assemblyPath, typeFullName, mode, Array.Empty<string>(), AssemblyBannerReader.GetDecompilerVersion());
         return IlSpyExternalSourcesProviderHelpers.BuildDiagnosticBanner(ctx, sourceLinkOutcome: null);
     }
 

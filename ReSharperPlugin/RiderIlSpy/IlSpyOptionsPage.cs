@@ -50,6 +50,9 @@ public class IlSpyOptionsPage : BeSimpleOptionsPage
         AddComboEnum((IlSpySettings s) => s.LanguageVersion, Strings.OptionsPage_LanguageVersion_Label, v => v switch
         {
             IlSpyLanguageVersion.Latest => Strings.OptionsPage_LanguageVersion_Latest,
+            IlSpyLanguageVersion.CSharp14_0 => Strings.OptionsPage_LanguageVersion_CSharp14_0,
+            IlSpyLanguageVersion.CSharp13_0 => Strings.OptionsPage_LanguageVersion_CSharp13_0,
+            IlSpyLanguageVersion.CSharp12_0 => Strings.OptionsPage_LanguageVersion_CSharp12_0,
             IlSpyLanguageVersion.CSharp11_0 => Strings.OptionsPage_LanguageVersion_CSharp11_0,
             IlSpyLanguageVersion.CSharp10_0 => Strings.OptionsPage_LanguageVersion_CSharp10_0,
             IlSpyLanguageVersion.CSharp9_0 => Strings.OptionsPage_LanguageVersion_CSharp9_0,

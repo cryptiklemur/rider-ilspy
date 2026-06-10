@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using ICSharpCode.Decompiler;
-using ICSharpCode.Decompiler.CSharp;
 using JetBrains.Application.Settings;
 using JetBrains.Util;
 
@@ -49,7 +47,7 @@ public sealed class IlSpyRequestSettingsBuilder
     {
         return new IlSpyRequestSettings(
             Mode: mode,
-            DecompilerSettings: BuildDecompilerSettings(),
+            DecompilerOptions: BuildDecompilerOptions(),
             ExtraSearchDirs: GetExtraSearchDirs(),
             ShowBanner: mySettings.GetValue((IlSpySettings s) => s.ShowDiagnosticBanner),
             PreferSourceLink: mySettings.GetValue((IlSpySettings s) => s.PreferSourceLink),
@@ -57,28 +55,20 @@ public sealed class IlSpyRequestSettingsBuilder
             DecompileReferenceAssemblies: mySettings.GetValue((IlSpySettings s) => s.DecompileReferenceAssemblies));
     }
 
-    private DecompilerSettings BuildDecompilerSettings()
+    // The engine converts this SDK-free record into real DecompilerSettings on
+    // its side of the load-context boundary (IlSpyEngine.ToDecompilerSettings),
+    // including the language-version downgrade semantics.
+    private IlSpyDecompilerOptions BuildDecompilerOptions()
     {
-        DecompilerSettings settings = new DecompilerSettings
-        {
-            ThrowOnAssemblyResolveErrors = mySettings.GetValue((IlSpySettings s) => s.ThrowOnAssemblyResolveErrors),
-            AsyncAwait = mySettings.GetValue((IlSpySettings s) => s.AsyncAwait),
-            UseExpressionBodyForCalculatedGetterOnlyProperties = mySettings.GetValue((IlSpySettings s) => s.ExpressionBodies),
-            NamedArguments = mySettings.GetValue((IlSpySettings s) => s.NamedArguments),
-            ShowXmlDocumentation = mySettings.GetValue((IlSpySettings s) => s.ShowXmlDocumentation),
-            RemoveDeadCode = mySettings.GetValue((IlSpySettings s) => s.RemoveDeadCode),
-            UsePrimaryConstructorSyntax = mySettings.GetValue((IlSpySettings s) => s.UsePrimaryConstructorSyntax),
-        };
-        // Apply language-version downgrade after construction so unspecified
-        // (Latest) leaves ILSpy's defaults untouched. SetLanguageVersion flips
-        // multiple feature flags (RecordClasses, InitAccessors, ...) to match
-        // the target version's capability set.
-        IlSpyLanguageVersion languageVersion = mySettings.GetValue((IlSpySettings s) => s.LanguageVersion);
-        if (languageVersion != IlSpyLanguageVersion.Latest)
-        {
-            settings.SetLanguageVersion((LanguageVersion)(int)languageVersion);
-        }
-        return settings;
+        return new IlSpyDecompilerOptions(
+            ThrowOnAssemblyResolveErrors: mySettings.GetValue((IlSpySettings s) => s.ThrowOnAssemblyResolveErrors),
+            AsyncAwait: mySettings.GetValue((IlSpySettings s) => s.AsyncAwait),
+            ExpressionBodies: mySettings.GetValue((IlSpySettings s) => s.ExpressionBodies),
+            NamedArguments: mySettings.GetValue((IlSpySettings s) => s.NamedArguments),
+            ShowXmlDocumentation: mySettings.GetValue((IlSpySettings s) => s.ShowXmlDocumentation),
+            RemoveDeadCode: mySettings.GetValue((IlSpySettings s) => s.RemoveDeadCode),
+            UsePrimaryConstructorSyntax: mySettings.GetValue((IlSpySettings s) => s.UsePrimaryConstructorSyntax),
+            LanguageVersion: mySettings.GetValue((IlSpySettings s) => s.LanguageVersion));
     }
 
     private IReadOnlyList<string> GetExtraSearchDirs()

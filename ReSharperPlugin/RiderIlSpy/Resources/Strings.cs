@@ -52,6 +52,9 @@ internal static class Strings
 
     public static string OptionsPage_LanguageVersion_Label => Get(nameof(OptionsPage_LanguageVersion_Label));
     public static string OptionsPage_LanguageVersion_Latest => Get(nameof(OptionsPage_LanguageVersion_Latest));
+    public static string OptionsPage_LanguageVersion_CSharp14_0 => Get(nameof(OptionsPage_LanguageVersion_CSharp14_0));
+    public static string OptionsPage_LanguageVersion_CSharp13_0 => Get(nameof(OptionsPage_LanguageVersion_CSharp13_0));
+    public static string OptionsPage_LanguageVersion_CSharp12_0 => Get(nameof(OptionsPage_LanguageVersion_CSharp12_0));
     public static string OptionsPage_LanguageVersion_CSharp11_0 => Get(nameof(OptionsPage_LanguageVersion_CSharp11_0));
     public static string OptionsPage_LanguageVersion_CSharp10_0 => Get(nameof(OptionsPage_LanguageVersion_CSharp10_0));
     public static string OptionsPage_LanguageVersion_CSharp9_0 => Get(nameof(OptionsPage_LanguageVersion_CSharp9_0));

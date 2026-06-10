@@ -103,7 +103,7 @@ public class IlSpyDecompilerSmokeTests
         Assert.DoesNotMatch(new Regex(@"\bclass\s+DefinitelyDoesNotExist\b"), result.Content);
     }
 
-    // These tests target the pure helper (IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata)
+    // These tests target the pure helper (AssemblyBannerReader.ReadAssemblyBannerMetadata)
     // rather than IlSpyDecompiler.GetAssemblyBannerMetadata because the latter references
     // ourLogger, whose JetBrains.Util.Logging dep won't JIT-verify in the xunit harness.
     // The wrapper on IlSpyDecompiler is a 3-line delegation + Warn — its only behavior
@@ -111,7 +111,7 @@ public class IlSpyDecompilerSmokeTests
     [Fact]
     public void ReadAssemblyBannerMetadata_returns_metadata_for_test_assembly()
     {
-        AssemblyBannerMetadata? meta = IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata(TestAssemblyPath);
+        AssemblyBannerMetadata? meta = AssemblyBannerReader.ReadAssemblyBannerMetadata(TestAssemblyPath);
         Assert.NotNull(meta);
         Assert.False(string.IsNullOrEmpty(meta!.Name));
         Assert.False(string.IsNullOrEmpty(meta.Version));
@@ -123,7 +123,7 @@ public class IlSpyDecompilerSmokeTests
     public void ReadAssemblyBannerMetadata_returns_null_for_missing_path()
     {
         string fake = Path.Combine(Path.GetTempPath(), "RiderIlSpy_DefinitelyMissing_" + Path.GetRandomFileName() + ".dll");
-        AssemblyBannerMetadata? meta = IlSpyExternalSourcesProviderHelpers.ReadAssemblyBannerMetadata(fake);
+        AssemblyBannerMetadata? meta = AssemblyBannerReader.ReadAssemblyBannerMetadata(fake);
         Assert.Null(meta);
     }
 

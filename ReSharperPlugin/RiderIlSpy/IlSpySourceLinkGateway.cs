@@ -10,7 +10,7 @@ namespace RiderIlSpy;
 
 /// <summary>
 /// Integration boundary between the navigation pipeline and the SourceLink fetch
-/// subsystem. Wraps <see cref="PdbSourceLinkReader"/> + <see cref="SourceLinkMapping"/>
+/// subsystem. Wraps the engine's PDB SourceLink reader + <see cref="SourceLinkMapping"/>
 /// + <see cref="SourceLinkSourceFetcher"/> into a single typed entry point —
 /// callers get back a <see cref="SourceLinkAttempt"/> describing either the
 /// fetched content or the canonical "why didn't this work" status.
@@ -39,6 +39,12 @@ public sealed class IlSpySourceLinkGateway
     // sockets on .NET Core and triggers SocketException after a few thousand
     // requests under sustained navigation.
     private readonly HttpClient mySharedHttpClient = CreateSharedHttpClient();
+    private readonly IIlSpyEngine myEngine;
+
+    public IlSpySourceLinkGateway(IlSpyEngineHost engineHost)
+    {
+        myEngine = engineHost.Engine;
+    }
 
     private static HttpClient CreateSharedHttpClient()
     {
@@ -73,7 +79,7 @@ public sealed class IlSpySourceLinkGateway
         if (timeoutSeconds <= 0) timeoutSeconds = 5;
         try
         {
-            using PdbSourceLinkReader? pdb = PdbSourceLinkReader.TryOpen(assemblyPath);
+            PdbSourceLinkInfo? pdb = myEngine.ReadPdbSourceLinkInfo(assemblyPath, typeFullName);
             // No per-branch Info logs: the SourceLinkAttempt.Outcome return value is
             // already the canonical "why did SourceLink not fire" signal, surfaced
             // in the diagnostic banner. Logging it here just duplicates the status
@@ -82,13 +88,12 @@ public sealed class IlSpySourceLinkGateway
             // doesn't carry the message.
             if (pdb == null)
                 return new SourceLinkAttempt(null, SourceLinkOutcome.Plain(SourceLinkStatus.NoPdb));
-            string? json = pdb.TryReadSourceLinkJson();
-            if (json == null)
+            if (pdb.SourceLinkJson == null)
                 return new SourceLinkAttempt(null, SourceLinkOutcome.Plain(SourceLinkStatus.NoSourceLinkEntry));
-            SourceLinkMapping? mapping = SourceLinkMapping.TryParse(json);
+            SourceLinkMapping? mapping = SourceLinkMapping.TryParse(pdb.SourceLinkJson);
             if (mapping == null)
                 return new SourceLinkAttempt(null, SourceLinkOutcome.Plain(SourceLinkStatus.MalformedJson));
-            string? documentPath = pdb.TryGetPrimaryDocumentPath(typeFullName);
+            string? documentPath = pdb.PrimaryDocumentPath;
             if (string.IsNullOrEmpty(documentPath))
                 return new SourceLinkAttempt(null, SourceLinkOutcome.Plain(SourceLinkStatus.NoDocument));
             string? url = mapping.ResolveUrl(documentPath);

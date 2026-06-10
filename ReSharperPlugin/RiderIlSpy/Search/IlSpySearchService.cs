@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using ICSharpCode.Decompiler.Metadata;
 using JetBrains.Application.FileSystemTracker;
 using JetBrains.Application.Parts;
 using JetBrains.Lifetimes;
@@ -32,15 +31,17 @@ public sealed class IlSpySearchService
 
     private IlSpySearchIndex? myIndex;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> myActiveSearches = new();
-    private readonly IlSpyNavResolver myNavResolver = new IlSpyNavResolver();
+    private readonly IIlSpyEngine myEngine;
 
     public IlSpySearchService(
         Lifetime lifetime,
         ISolution solution,
         IFileSystemTracker fileSystemTracker,
-        ISolutionLoadTasksScheduler scheduler)
+        ISolutionLoadTasksScheduler scheduler,
+        IlSpyEngineHost engineHost)
     {
         myLifetime = lifetime;
+        myEngine = engineHost.Engine;
         myFileSystemTracker = fileSystemTracker;
         myModel = solution.GetProtocolSolution().GetRiderIlSpyModel();
         myWatcher = new IlSpyAssemblyWatcher(myLifetime, OnAssemblyChanged);
@@ -69,10 +70,9 @@ public sealed class IlSpySearchService
         {
             try
             {
-                IlSpySearchIndexer indexer = new IlSpySearchIndexer();
                 IlSpyIndexBuildProgress? lastProgress = null;
                 int loggedSkips = 0;
-                IlSpySearchIndex index = indexer.BuildAll(
+                IlSpySearchIndex index = myEngine.BuildSearchIndex(
                     paths,
                     p => { lastProgress = p; PublishState("Building", p.Indexed, p.Total, p.Skipped, ""); },
                     myLifetime.ToCancellationToken(),
@@ -202,23 +202,10 @@ public sealed class IlSpySearchService
     private void EmitConstantResults(SearchRequest req, CancellationToken ct)
     {
         IReadOnlyCollection<AssemblyMetadata> assemblies = myIndex!.RegisteredAssemblies();
-        List<PEFile> peFiles = new List<PEFile>(assemblies.Count);
-        try
-        {
-            foreach (AssemblyMetadata asm in assemblies)
-            {
-                try { peFiles.Add(new PEFile(asm.DisplayPath)); }
-                catch { /* skip unreadable assemblies */ }
-            }
-
-            ConstantQueryHandler handler = new ConstantQueryHandler();
-            List<ConstantHit> hits = handler.Scan(peFiles, req.Input);
-            EmitBatched(req.SearchId, hits, ToRow, req.MaxResults, ct);
-        }
-        finally
-        {
-            foreach (PEFile pe in peFiles) pe.Dispose();
-        }
+        List<string> paths = new List<string>(assemblies.Count);
+        foreach (AssemblyMetadata asm in assemblies) paths.Add(asm.DisplayPath);
+        List<ConstantHit> hits = myEngine.ScanConstants(paths, req.Input);
+        EmitBatched(req.SearchId, hits, ToRow, req.MaxResults, ct);
     }
 
     private void EmitResourceResults(SearchRequest req, CancellationToken ct)
@@ -345,12 +332,7 @@ public sealed class IlSpySearchService
         {
             try
             {
-                using PEFile pe = new PEFile(assemblyPath);
-                AssemblyMetadata metadata = AssemblyMetadata.From(assemblyPath);
-                IlSpySearchIndexer indexer = new IlSpySearchIndexer();
-                indexer.IndexLiterals(pe, metadata, myIndex);
-                indexer.IndexAttributes(pe, metadata, myIndex);
-                indexer.IndexResources(pe, metadata, myIndex);
+                myEngine.IndexAssembly(assemblyPath, myIndex);
             }
             catch (Exception ex)
             {
@@ -366,7 +348,7 @@ public sealed class IlSpySearchService
         {
             try
             {
-                IlSpyNavResolution result = myNavResolver.Resolve(target.AssemblyPath, target.MetadataToken, target.IlOffset);
+                IlSpyNavResolution result = myEngine.ResolveNavigation(target.AssemblyPath, target.MetadataToken, target.IlOffset);
                 NavResolution payload = new NavResolution(
                     success: result.Success,
                     filePath: result.FilePath,
