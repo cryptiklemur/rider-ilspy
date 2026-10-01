@@ -12,10 +12,8 @@ namespace RiderIlSpy;
 /// loads RiderIlSpy.Engine.dll into it, and exposes the engine through the
 /// SDK-free <see cref="IIlSpyEngine"/> contract. Components that used to take
 /// IlSpyDecompiler directly now take this host and call <see cref="Engine"/>.
-/// The engine assembly and its private ICSharpCode.Decompiler / SRM / SCI
-/// copies live in the <c>engine/</c> subdirectory next to RiderIlSpy.dll —
-/// a subdirectory rather than the plugin root so Rider's own plugin loader
-/// never scans them into the default load context.
+/// The engine and its private decompiler copies live in the plugin's
+/// <c>engine/</c> directory, outside the <c>dotnet/</c> folder ReSharper scans.
 /// </summary>
 [ShellComponent]
 public class IlSpyEngineHost
@@ -29,14 +27,8 @@ public class IlSpyEngineHost
     {
         string pluginDir = Path.GetDirectoryName(typeof(IlSpyEngineHost).Assembly.Location)
                            ?? throw new InvalidOperationException("RiderIlSpy.dll has no on-disk location; cannot locate the engine directory");
-        string engineDir = Path.Combine(pluginDir, "engine");
-        // Dev-loop convenience: `dotnet build` drops the engine flat next to the
-        // host dll, while the packaged plugin ships it under engine/. Prefer the
-        // packaged layout, fall back to flat.
-        if (!File.Exists(Path.Combine(engineDir, "RiderIlSpy.Engine.dll")))
-            engineDir = pluginDir;
-
-        string enginePath = Path.Combine(engineDir, "RiderIlSpy.Engine.dll");
+        string engineDir = EngineDirectoryResolver.Resolve(pluginDir, File.Exists);
+        string enginePath = Path.Combine(engineDir, EngineDirectoryResolver.EngineFileName);
         IlSpyEngineLoadContext context = new IlSpyEngineLoadContext(engineDir);
         Assembly engineAssembly = context.LoadFromAssemblyPath(enginePath);
         Type engineType = engineAssembly.GetType("RiderIlSpy.IlSpyEngine")

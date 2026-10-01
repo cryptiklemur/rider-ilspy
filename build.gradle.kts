@@ -165,16 +165,13 @@ tasks.withType<PrepareSandboxTask>().configureEach {
         include("$outputAssemblyName.Contracts.pdb")
         into("${intellijPlatform.projectName.get()}/dotnet")
     }
-    // The engine + its private decompiler/SRM/SCI copies go into a subdirectory
-    // so Rider's plugin loader never scans them into the default load context —
-    // IlSpyEngineHost loads them through IlSpyEngineLoadContext instead.
     from(resharperEngineBin) {
         include("$outputAssemblyName.Engine.dll")
         include("$outputAssemblyName.Engine.pdb")
         include("ICSharpCode.Decompiler.dll")
         include("System.Reflection.Metadata.dll")
         include("System.Collections.Immutable.dll")
-        into("${intellijPlatform.projectName.get()}/dotnet/engine")
+        into("${intellijPlatform.projectName.get()}/engine")
     }
 }
 
