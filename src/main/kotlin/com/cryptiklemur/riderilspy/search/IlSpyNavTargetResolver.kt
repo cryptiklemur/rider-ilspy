@@ -12,6 +12,7 @@ class IlSpyNavTargetResolver(
         when (target.kind) {
             "Code" -> navigateCode(target)
             "Resource" -> resourceHandler.handle(target)
+            "None" -> Unit
             else -> error(RiderIlSpyBundle.message("nav.error.unknown_kind", target.kind))
         }
     }

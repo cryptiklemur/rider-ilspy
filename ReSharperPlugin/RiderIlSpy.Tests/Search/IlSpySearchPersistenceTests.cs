@@ -28,27 +28,6 @@ public class IlSpySearchPersistenceTests
     }
 
     [Fact]
-    public void Round_Trip_Attributes()
-    {
-        string tmp = Path.GetTempFileName();
-        try
-        {
-            IlSpySearchIndex written = new IlSpySearchIndex();
-            AssemblyId asm = AssemblyId.From("/x/b.dll");
-            written.RegisterAssembly(new AssemblyMetadata(asm, "/x/b.dll", DateTime.UtcNow, 512));
-            written.AddAttribute(new AttributeIndexEntry(asm, "System.ObsoleteAttribute", "ObsoleteAttribute", 0x02_000_001, "Type", "(...)"));
-            new IlSpySearchPersistence().Save(written, tmp);
-
-            IlSpySearchIndex? read = new IlSpySearchPersistence().Load(tmp);
-            Assert.NotNull(read);
-            System.Collections.Generic.List<AttributeIndexEntry> hits = read!.LookupAttributesByFqn("System.ObsoleteAttribute");
-            Assert.Single(hits);
-            Assert.Equal("ObsoleteAttribute", hits[0].AttributeTypeShortName);
-        }
-        finally { File.Delete(tmp); }
-    }
-
-    [Fact]
     public void Round_Trip_Resources()
     {
         string tmp = Path.GetTempFileName();

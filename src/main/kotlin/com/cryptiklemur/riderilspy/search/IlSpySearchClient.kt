@@ -35,9 +35,10 @@ class IlSpySearchClient(
         caseSensitive: Boolean,
         wholeWord: Boolean,
         maxResults: Int,
+        debounce: Boolean = true,
         onBatch: (SearchResultBatch) -> Unit,
     ) {
-        debouncer.trigger {
+        val start: () -> Unit = {
             val searchId = UUID.randomUUID().toString()
             activeSearchIdRef.set(searchId)
             val model = project.solution.riderIlSpyModel
@@ -53,13 +54,17 @@ class IlSpySearchClient(
             )
             model.protocol?.scheduler?.invokeOrQueue {
                 LOG.info("ilspy-search-fe: advise + start id=$searchId type=$queryType")
-                model.searchResultBatch.advise(lifetime) { batch ->
+                val subscription = lifetime.createNested()
+                model.searchResultBatch.advise(subscription.lifetime) { batch ->
+                    if (batch.searchId != searchId) return@advise
                     LOG.info("ilspy-search-fe: batch received id=${batch.searchId} rows=${batch.rows.size} complete=${batch.isComplete}")
-                    if (batch.searchId == searchId) onBatch(batch)
+                    onBatch(batch)
+                    if (batch.isComplete) subscription.terminate()
                 }
-                model.runSearch.start(lifetime, request)
+                model.runSearch.start(subscription.lifetime, request)
             }
         }
+        if (debounce) debouncer.trigger(start) else start()
     }
 
     fun cancelActive() {

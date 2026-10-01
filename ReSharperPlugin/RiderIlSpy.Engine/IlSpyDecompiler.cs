@@ -287,7 +287,7 @@ public class IlSpyDecompiler
         foreach (KeyValuePair<ILFunction, List<ICSharpCode.Decompiler.DebugInfo.SequencePoint>> kv in map)
         {
             ILFunction function = kv.Key;
-            IMethod method = function.MoveNextMethod ?? function.Method;
+            IMethod? method = function.MoveNextMethod ?? function.Method;
             if (method == null) continue;
             EntityHandle handle = method.MetadataToken;
             if (handle.IsNil || handle.Kind != HandleKind.MethodDefinition) continue;

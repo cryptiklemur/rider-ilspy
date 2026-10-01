@@ -12,8 +12,16 @@ class IlSpySearchMatchRenderer : ColoredListCellRenderer<IlSpySearchMatch>() {
         selected: Boolean,
         hasFocus: Boolean,
     ) {
-        append("\"${value.snippet}\"", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
-        append("  ${value.target}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+        val display = rowDisplay(value.target, value.snippet)
+        icon = IlSpySymbolIcons.forKind(display.kind)
+        if (display.kind == null) {
+            append("\"${display.primary}\"", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+        } else {
+            append(display.primary, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+        }
+        if (display.secondary.isNotEmpty()) {
+            append("  ${display.secondary}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+        }
         append("  ·  ${value.assemblyName}", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
     }
 }

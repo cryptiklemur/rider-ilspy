@@ -25,6 +25,5 @@ public class IlSpySearchIndexerBuildAllTests
         Assert.Equal(3, finalProgress!.Indexed);
         Assert.Equal(0, finalProgress.Skipped);
         Assert.NotEmpty(index.LookupLiteralCandidatesByTrigram("hel", false));
-        Assert.True(index.LookupAttributesByFqn("System.ObsoleteAttribute").Count > 0);
     }
 }

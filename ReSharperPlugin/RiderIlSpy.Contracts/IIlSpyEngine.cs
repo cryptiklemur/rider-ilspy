@@ -52,8 +52,16 @@ public interface IIlSpyEngine
         CancellationToken cancellationToken,
         Action<string, Exception>? onSkipped = null);
 
-    /// <summary>Indexes one (changed) assembly's literals/attributes/resources into <paramref name="index"/>.</summary>
     void IndexAssembly(string assemblyPath, IlSpySearchIndex index);
 
     List<ConstantHit> ScanConstants(IReadOnlyList<string> assemblyPaths, string input);
+
+    List<SymbolHit> ScanSymbols(
+        IReadOnlyList<string> assemblyPaths,
+        SymbolSearchKind kinds,
+        string input,
+        bool caseSensitive,
+        bool regex,
+        bool wholeWord,
+        CancellationToken cancellationToken);
 }

@@ -25,6 +25,25 @@ class DebouncerTest {
     }
 
     @Test
+    fun `back-to-back triggers drop all but the last, so callers needing every call must not debounce`() = runBlocking {
+        val delayMs = 100L
+        val fired = mutableListOf<String>()
+        val debouncer = Debouncer(CoroutineScope(Dispatchers.Default), delayMs)
+
+        for (queryType in listOf("TypeAndMember", "Constant")) {
+            debouncer.trigger { synchronized(fired) { fired.add(queryType) } }
+        }
+
+        Thread.sleep(delayMs * 3)
+
+        assertEquals(
+            listOf("Constant"),
+            synchronized(fired) { fired.toList() },
+            "two triggers in one window keep only the last; Search Everywhere passes debounce=false to get both",
+        )
+    }
+
+    @Test
     fun `cancelPending prevents the queued action from firing`() = runBlocking {
         val delayMs = 100L
         val count = AtomicInteger(0)

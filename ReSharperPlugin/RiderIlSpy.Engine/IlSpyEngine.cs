@@ -69,11 +69,28 @@ public sealed class IlSpyEngine : IIlSpyEngine
         AssemblyMetadata metadata = AssemblyMetadata.From(assemblyPath);
         IlSpySearchIndexer indexer = new IlSpySearchIndexer();
         indexer.IndexLiterals(pe, metadata, index);
-        indexer.IndexAttributes(pe, metadata, index);
         indexer.IndexResources(pe, metadata, index);
     }
 
     public List<ConstantHit> ScanConstants(IReadOnlyList<string> assemblyPaths, string input)
+        => WithOpenAssemblies(assemblyPaths, peFiles => new ConstantQueryHandler().Scan(peFiles, input));
+
+    public List<SymbolHit> ScanSymbols(
+        IReadOnlyList<string> assemblyPaths,
+        SymbolSearchKind kinds,
+        string input,
+        bool caseSensitive,
+        bool regex,
+        bool wholeWord,
+        CancellationToken cancellationToken)
+    {
+        TextMatcher matcher = new TextMatcher(input, caseSensitive, regex, wholeWord);
+        return WithOpenAssemblies(
+            assemblyPaths,
+            peFiles => new SymbolQueryHandler().Scan(peFiles, kinds, matcher, cancellationToken));
+    }
+
+    private static T WithOpenAssemblies<T>(IReadOnlyList<string> assemblyPaths, Func<List<PEFile>, T> scan)
     {
         List<PEFile> peFiles = new List<PEFile>(assemblyPaths.Count);
         try
@@ -83,7 +100,7 @@ public sealed class IlSpyEngine : IIlSpyEngine
                 try { peFiles.Add(new PEFile(path)); }
                 catch { /* skip unreadable assemblies */ }
             }
-            return new ConstantQueryHandler().Scan(peFiles, input);
+            return scan(peFiles);
         }
         finally
         {

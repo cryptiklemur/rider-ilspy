@@ -7,8 +7,6 @@ public sealed class IlSpySearchIndex
 {
     private readonly ReaderWriterLockSlim myLock = new ReaderWriterLockSlim();
     private readonly Dictionary<string, List<LiteralIndexEntry>> myLiteralTrigrams = new Dictionary<string, List<LiteralIndexEntry>>();
-    private readonly Dictionary<string, List<AttributeIndexEntry>> myAttributesByFqn = new Dictionary<string, List<AttributeIndexEntry>>();
-    private readonly Dictionary<string, List<AttributeIndexEntry>> myAttributesByShort = new Dictionary<string, List<AttributeIndexEntry>>(System.StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<ResourceIndexEntry>> myResourceTrigrams = new Dictionary<string, List<ResourceIndexEntry>>();
     private readonly Dictionary<AssemblyId, AssemblyMetadata> myAssemblies = new Dictionary<AssemblyId, AssemblyMetadata>();
 
@@ -58,52 +56,6 @@ public sealed class IlSpySearchIndex
         finally { myLock.ExitReadLock(); }
     }
 
-    public void AddAttribute(AttributeIndexEntry entry)
-    {
-        myLock.EnterWriteLock();
-        try
-        {
-            if (!myAttributesByFqn.TryGetValue(entry.AttributeTypeFullName, out List<AttributeIndexEntry>? bucket))
-            {
-                bucket = new List<AttributeIndexEntry>();
-                myAttributesByFqn[entry.AttributeTypeFullName] = bucket;
-            }
-            bucket.Add(entry);
-
-            if (!myAttributesByShort.TryGetValue(entry.AttributeTypeShortName, out List<AttributeIndexEntry>? sBucket))
-            {
-                sBucket = new List<AttributeIndexEntry>();
-                myAttributesByShort[entry.AttributeTypeShortName] = sBucket;
-            }
-            sBucket.Add(entry);
-        }
-        finally { myLock.ExitWriteLock(); }
-    }
-
-    public List<AttributeIndexEntry> LookupAttributesByFqn(string fqn)
-    {
-        myLock.EnterReadLock();
-        try
-        {
-            return myAttributesByFqn.TryGetValue(fqn, out List<AttributeIndexEntry>? bucket)
-                ? new List<AttributeIndexEntry>(bucket)
-                : [];
-        }
-        finally { myLock.ExitReadLock(); }
-    }
-
-    public List<AttributeIndexEntry> LookupAttributesByShortName(string shortName)
-    {
-        myLock.EnterReadLock();
-        try
-        {
-            return myAttributesByShort.TryGetValue(shortName, out List<AttributeIndexEntry>? bucket)
-                ? new List<AttributeIndexEntry>(bucket)
-                : [];
-        }
-        finally { myLock.ExitReadLock(); }
-    }
-
     public void AddResource(ResourceIndexEntry entry)
     {
         HashSet<string> trigrams = TrigramExtractor.Extract(entry.ResourceName, caseSensitive: false);
@@ -132,21 +84,6 @@ public sealed class IlSpySearchIndex
             return myResourceTrigrams.TryGetValue(key, out List<ResourceIndexEntry>? bucket)
                 ? new List<ResourceIndexEntry>(bucket)
                 : [];
-        }
-        finally { myLock.ExitReadLock(); }
-    }
-
-    public System.Collections.Generic.IEnumerable<AttributeIndexEntry> AllAttributeEntries()
-    {
-        myLock.EnterReadLock();
-        try
-        {
-            HashSet<(AssemblyId, string, int)> seen = new HashSet<(AssemblyId, string, int)>();
-            List<AttributeIndexEntry> output = new List<AttributeIndexEntry>();
-            foreach (List<AttributeIndexEntry> bucket in myAttributesByFqn.Values)
-                foreach (AttributeIndexEntry e in bucket)
-                    if (seen.Add((e.AssemblyId, e.AttributeTypeFullName, e.TargetMetadataToken))) output.Add(e);
-            return output;
         }
         finally { myLock.ExitReadLock(); }
     }
@@ -188,8 +125,6 @@ public sealed class IlSpySearchIndex
         {
             myAssemblies.Remove(id);
             foreach (List<LiteralIndexEntry> bucket in myLiteralTrigrams.Values) bucket.RemoveAll(e => e.AssemblyId == id);
-            foreach (List<AttributeIndexEntry> bucket in myAttributesByFqn.Values) bucket.RemoveAll(e => e.AssemblyId == id);
-            foreach (List<AttributeIndexEntry> bucket in myAttributesByShort.Values) bucket.RemoveAll(e => e.AssemblyId == id);
             foreach (List<ResourceIndexEntry> bucket in myResourceTrigrams.Values) bucket.RemoveAll(e => e.AssemblyId == id);
         }
         finally { myLock.ExitWriteLock(); }

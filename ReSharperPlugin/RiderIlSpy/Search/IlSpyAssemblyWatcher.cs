@@ -35,7 +35,7 @@ public sealed class IlSpyAssemblyWatcher : IDisposable
             }
             CancellationTokenSource cts = new CancellationTokenSource();
             myPendingByPath[path] = cts;
-            Task.Delay(myDebounce, cts.Token).ContinueWith(t =>
+            _ = Task.Delay(myDebounce, cts.Token).ContinueWith(t =>
             {
                 if (t.IsCanceled) return;
                 lock (myPendingByPath) { myPendingByPath.Remove(path); }

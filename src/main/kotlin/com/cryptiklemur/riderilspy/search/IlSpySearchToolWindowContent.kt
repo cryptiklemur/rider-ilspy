@@ -31,13 +31,9 @@ class IlSpySearchToolWindowContent(private val project: Project) {
     // override is what the user sees. Keep them split so localizing the labels
     // doesn't change the protocol payload.
     private val queryTypeBox = JComboBox(
-        arrayOf(
-            QueryTypeChoice("Literal", RiderIlSpyBundle.message("search.toolwindow.query_type.literal")),
-            QueryTypeChoice("Attribute", RiderIlSpyBundle.message("search.toolwindow.query_type.attribute")),
-            QueryTypeChoice("Token", RiderIlSpyBundle.message("search.toolwindow.query_type.token")),
-            QueryTypeChoice("Constant", RiderIlSpyBundle.message("search.toolwindow.query_type.constant")),
-            QueryTypeChoice("Resource", RiderIlSpyBundle.message("search.toolwindow.query_type.resource")),
-        ),
+        QUERY_TYPE_IDS
+            .map { QueryTypeChoice(it, RiderIlSpyBundle.message(bundleKeyFor(it))) }
+            .toTypedArray(),
     )
     private val inputField = JTextField()
     private val regexBox = JCheckBox(RiderIlSpyBundle.message("search.toolwindow.regex"))
@@ -173,6 +169,29 @@ class IlSpySearchToolWindowContent(private val project: Project) {
         bar.add(row2)
         return bar
     }
+
+    companion object {
+        /** Protocol ids of the query types the backend accepts, in the order ILSpy lists them. */
+        val QUERY_TYPE_IDS = listOf(
+            "TypeAndMember",
+            "Type",
+            "Member",
+            "Method",
+            "Field",
+            "Property",
+            "Event",
+            "Constant",
+            "Token",
+            "Resource",
+            "Assembly",
+            "Namespace",
+        )
+
+        fun bundleKeyFor(protocolId: String): String {
+            val suffix = protocolId.replace(Regex("(?<=.)([A-Z])"), "_$1").lowercase()
+            return "search.toolwindow.query_type.$suffix"
+        }
+    }
 }
 
 private data class QueryTypeChoice(val protocolId: String, val displayLabel: String) {
@@ -203,11 +222,12 @@ private class ResultsTreeRenderer : ColoredTreeCellRenderer() {
                 append("  (${payload.count})", SimpleTextAttributes.GRAYED_ATTRIBUTES)
             }
             is ResultPayload -> {
-                icon = AllIcons.Nodes.Method
-                append(payload.target, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-                if (payload.snippet.isNotBlank()) {
+                val display = rowDisplay(payload.target, payload.snippet)
+                icon = IlSpySymbolIcons.forKind(display.kind)
+                append(display.primary, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                if (display.secondary.isNotBlank()) {
                     append("   ")
-                    append(payload.snippet, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                    append(display.secondary, SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }
             }
             else -> append(payload?.toString() ?: "")

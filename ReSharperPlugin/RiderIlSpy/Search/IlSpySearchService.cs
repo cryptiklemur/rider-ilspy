@@ -48,10 +48,10 @@ public sealed class IlSpySearchService
 
         PublishState("Idle", 0, 0, 0, "");
 
-        myModel.RunSearch.Set((lt, request) => RdTask.Successful(HandleRunSearch(lt, request)));
+        myModel.RunSearch.SetSync((lt, request) => HandleRunSearch(lt, request));
         myModel.CancelSearch.Advise(myLifetime, OnCancel);
         myModel.RescanAssembly.Advise(myLifetime, OnRescan);
-        myModel.ResolveNavTarget.Set((lt, navTarget) => HandleResolveNavTarget(lt, navTarget));
+        myModel.ResolveNavTarget.SetAsync((lt, navTarget) => HandleResolveNavTargetAsync(lt, navTarget));
 
         scheduler.EnqueueTask(new SolutionLoadTask(
             GetType(),
@@ -66,7 +66,7 @@ public sealed class IlSpySearchService
         ourLogger.Info($"ilspy-search: index build starting with {paths.Count} assemblies");
         PublishState("Building", 0, paths.Count, 0, "");
 
-        Task.Run(() =>
+        _ = Task.Run(() =>
         {
             try
             {
@@ -122,11 +122,17 @@ public sealed class IlSpySearchService
             return request.SearchId;
         }
 
+        if (!SearchQuery.IsRunnable(request.Input))
+        {
+            FireBatch(request.SearchId, new List<SearchResultRow>(), isComplete: true, errorMessage: "");
+            return request.SearchId;
+        }
+
         CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(
             myLifetime.ToCancellationToken());
         myActiveSearches[request.SearchId] = cts;
 
-        Task.Run(() =>
+        _ = Task.Run(() =>
         {
             try
             {
@@ -148,30 +154,47 @@ public sealed class IlSpySearchService
 
     private void DispatchQuery(SearchRequest request, CancellationToken ct)
     {
+        SymbolSearchKind kinds = SymbolSearchKinds.FromQueryType(request.QueryType);
+        if (kinds != SymbolSearchKind.None)
+        {
+            EmitSymbolResults(request, kinds, ct);
+            return;
+        }
+
         switch (request.QueryType)
         {
-            case "Literal": EmitLiteralResults(request, ct); break;
-            case "Attribute": EmitAttributeResults(request, ct); break;
             case "Token": EmitTokenResults(request, ct); break;
             case "Constant": EmitConstantResults(request, ct); break;
             case "Resource": EmitResourceResults(request, ct); break;
+            case "Assembly": EmitAssemblyResults(request, ct); break;
             default: EmitErrorBatch(request.SearchId, RiderIlSpy.Resources.Strings.Search_UnknownQueryType(request.QueryType)); break;
         }
     }
 
-    private void EmitLiteralResults(SearchRequest req, CancellationToken ct)
+    private void EmitSymbolResults(SearchRequest req, SymbolSearchKind kinds, CancellationToken ct)
     {
-        LiteralQueryHandler handler = new LiteralQueryHandler(myIndex!);
-        List<LiteralIndexEntry> hits = handler.Query(
-            new LiteralQuery(req.Input, req.CaseSensitive, req.Regex, req.WholeWord));
+        List<SymbolHit> hits = myEngine.ScanSymbols(
+            IndexedAssemblyPaths(), kinds, req.Input, req.CaseSensitive, req.Regex, req.WholeWord, ct);
         EmitBatched(req.SearchId, hits, ToRow, req.MaxResults, ct);
     }
 
-    private void EmitAttributeResults(SearchRequest req, CancellationToken ct)
+    private void EmitAssemblyResults(SearchRequest req, CancellationToken ct)
     {
-        AttributeQueryHandler handler = new AttributeQueryHandler(myIndex!);
-        List<AttributeIndexEntry> hits = handler.Query(req.Input);
+        TextMatcher matcher = new TextMatcher(req.Input, req.CaseSensitive, req.Regex, req.WholeWord);
+        List<AssemblyMetadata> hits = new List<AssemblyMetadata>();
+        foreach (AssemblyMetadata asm in myIndex!.RegisteredAssemblies())
+        {
+            if (matcher.Matches(Path.GetFileNameWithoutExtension(asm.DisplayPath))) hits.Add(asm);
+        }
         EmitBatched(req.SearchId, hits, ToRow, req.MaxResults, ct);
+    }
+
+    private List<string> IndexedAssemblyPaths()
+    {
+        IReadOnlyCollection<AssemblyMetadata> assemblies = myIndex!.RegisteredAssemblies();
+        List<string> paths = new List<string>(assemblies.Count);
+        foreach (AssemblyMetadata asm in assemblies) paths.Add(asm.DisplayPath);
+        return paths;
     }
 
     private void EmitTokenResults(SearchRequest req, CancellationToken ct)
@@ -201,11 +224,12 @@ public sealed class IlSpySearchService
 
     private void EmitConstantResults(SearchRequest req, CancellationToken ct)
     {
-        IReadOnlyCollection<AssemblyMetadata> assemblies = myIndex!.RegisteredAssemblies();
-        List<string> paths = new List<string>(assemblies.Count);
-        foreach (AssemblyMetadata asm in assemblies) paths.Add(asm.DisplayPath);
-        List<ConstantHit> hits = myEngine.ScanConstants(paths, req.Input);
-        EmitBatched(req.SearchId, hits, ToRow, req.MaxResults, ct);
+        List<SearchResultRow> rows = new List<SearchResultRow>();
+        List<LiteralIndexEntry> literals = new LiteralQueryHandler(myIndex!).Query(
+            new LiteralQuery(req.Input, req.CaseSensitive, req.Regex, req.WholeWord));
+        foreach (LiteralIndexEntry e in literals) rows.Add(ToRow(e));
+        foreach (ConstantHit h in myEngine.ScanConstants(IndexedAssemblyPaths(), req.Input)) rows.Add(ToRow(h));
+        EmitBatched(req.SearchId, rows, r => r, req.MaxResults, ct);
     }
 
     private void EmitResourceResults(SearchRequest req, CancellationToken ct)
@@ -230,17 +254,32 @@ public sealed class IlSpySearchService
                 resourceEntry: "",
                 mimeHint: ""));
 
-    private static SearchResultRow ToRow(AttributeIndexEntry e) =>
+    private static SearchResultRow ToRow(SymbolHit h) =>
         new SearchResultRow(
-            assemblyName: Path.GetFileName(e.AssemblyId.NormalizedPath),
-            target: $"#{e.TargetMetadataToken:X8} ({e.TargetKind})",
-            snippet: $"{e.AttributeTypeFullName}{e.ArgsSummary}",
+            assemblyName: Path.GetFileName(h.AssemblyId.NormalizedPath),
+            target: h.DisplayName,
+            snippet: h.Kind.ToString(),
             matchStart: 0,
             matchLength: 0,
             navTarget: new NavTarget(
-                kind: "Code",
-                assemblyPath: e.AssemblyId.NormalizedPath,
-                metadataToken: e.TargetMetadataToken,
+                kind: h.MetadataToken == 0 ? "None" : "Code",
+                assemblyPath: h.AssemblyId.NormalizedPath,
+                metadataToken: h.MetadataToken,
+                ilOffset: -1,
+                resourceEntry: "",
+                mimeHint: ""));
+
+    private static SearchResultRow ToRow(AssemblyMetadata asm) =>
+        new SearchResultRow(
+            assemblyName: Path.GetFileName(asm.DisplayPath),
+            target: Path.GetFileNameWithoutExtension(asm.DisplayPath),
+            snippet: asm.DisplayPath,
+            matchStart: 0,
+            matchLength: 0,
+            navTarget: new NavTarget(
+                kind: "None",
+                assemblyPath: asm.DisplayPath,
+                metadataToken: 0,
                 ilOffset: -1,
                 resourceEntry: "",
                 mimeHint: ""));
@@ -304,7 +343,7 @@ public sealed class IlSpySearchService
     {
         ourLogger.Info($"ilspy-search: fire batch id={searchId} rows={rows.Count} complete={isComplete} err='{errorMessage}'");
         SearchResultBatch payload = new SearchResultBatch(searchId, rows, isComplete, errorMessage);
-        IProtocol protocol = ((IRdDynamic)myModel).TryGetProto();
+        IProtocol? protocol = ((IRdDynamic)myModel).TryGetProto();
         if (protocol != null)
             protocol.Scheduler.Queue(() => myModel.SearchResultBatch.Fire(payload));
     }
@@ -328,7 +367,7 @@ public sealed class IlSpySearchService
         if (myIndex == null) return;
         AssemblyId id = AssemblyId.From(assemblyPath);
         myIndex.DropAssembly(id);
-        Task.Run(() =>
+        _ = Task.Run(() =>
         {
             try
             {
@@ -341,35 +380,33 @@ public sealed class IlSpySearchService
         }, myLifetime.ToCancellationToken());
     }
 
-    private RdTask<NavResolution> HandleResolveNavTarget(Lifetime requestLt, NavTarget target)
+    private Task<NavResolution> HandleResolveNavTargetAsync(Lifetime requestLt, NavTarget target)
     {
-        RdTask<NavResolution> task = new RdTask<NavResolution>();
-        Task.Run(() =>
+        return Task.Run(() =>
         {
             try
             {
                 IlSpyNavResolution result = myEngine.ResolveNavigation(target.AssemblyPath, target.MetadataToken, target.IlOffset);
-                NavResolution payload = new NavResolution(
+                ourLogger.Info($"ilspy-search nav: token=0x{target.MetadataToken:X8} kind={target.Kind} success={result.Success} file={result.FilePath}:{result.Line}:{result.Column} err='{result.ErrorMessage}'");
+                return new NavResolution(
                     success: result.Success,
                     filePath: result.FilePath,
                     line: result.Line,
                     column: result.Column,
                     errorMessage: result.ErrorMessage);
-                task.Set(payload);
             }
             catch (Exception ex)
             {
                 ourLogger.Warn($"ilspy-search nav: handler failed path={target.AssemblyPath} token=0x{target.MetadataToken:X8}: {ex.GetType().Name}: {ex.Message}");
-                task.Set(new NavResolution(false, string.Empty, 1, 1, ex.Message));
+                return new NavResolution(false, string.Empty, 1, 1, ex.Message);
             }
         }, myLifetime.ToCancellationToken());
-        return task;
     }
 
     private void PublishState(string phase, int indexed, int total, int skipped, string error)
     {
         SearchIndexState state = new SearchIndexState(phase, indexed, total, skipped, error);
-        IProtocol protocol = ((IRdDynamic)myModel).TryGetProto();
+        IProtocol? protocol = ((IRdDynamic)myModel).TryGetProto();
         if (protocol != null)
             protocol.Scheduler.Queue(() => myModel.SearchIndexState.Value = state);
         else

@@ -47,24 +47,6 @@ public sealed class IlSpySearchIndexer
         }
     }
 
-    public void IndexAttributes(PEFile peFile, AssemblyMetadata metadata, IlSpySearchIndex target)
-    {
-        target.RegisterAssembly(metadata);
-        MetadataReader reader = peFile.Metadata;
-
-        foreach (CustomAttributeHandle handle in reader.CustomAttributes)
-        {
-            CustomAttribute attr = reader.GetCustomAttribute(handle);
-            string fqn = ResolveAttributeTypeFqn(reader, attr);
-            string shortName = fqn.Contains('.') ? fqn[(fqn.LastIndexOf('.') + 1)..] : fqn;
-            EntityHandle parent = attr.Parent;
-            string targetKind = ClassifyParent(parent);
-            int targetToken = MetadataTokens.GetToken(parent);
-            target.AddAttribute(new AttributeIndexEntry(
-                metadata.Id, fqn, shortName, targetToken, targetKind, ArgsSummary(attr)));
-        }
-    }
-
     public void IndexResources(PEFile peFile, AssemblyMetadata metadata, IlSpySearchIndex target)
     {
         target.RegisterAssembly(metadata);
@@ -145,59 +127,6 @@ public sealed class IlSpySearchIndexer
         }
     }
 
-    private static string ResolveAttributeTypeFqn(MetadataReader reader, CustomAttribute attr)
-    {
-        EntityHandle ctorHandle = attr.Constructor;
-        EntityHandle typeHandle = ctorHandle.Kind switch
-        {
-            HandleKind.MethodDefinition => reader.GetMethodDefinition((MethodDefinitionHandle)ctorHandle).GetDeclaringType(),
-            HandleKind.MemberReference => reader.GetMemberReference((MemberReferenceHandle)ctorHandle).Parent,
-            _ => default
-        };
-        if (typeHandle.IsNil) return "<unknown>";
-        return typeHandle.Kind switch
-        {
-            HandleKind.TypeDefinition => FormatTypeDef(reader, (TypeDefinitionHandle)typeHandle),
-            HandleKind.TypeReference => FormatTypeRef(reader, (TypeReferenceHandle)typeHandle),
-            _ => "<unknown>"
-        };
-    }
-
-    private static string FormatTypeDef(MetadataReader r, TypeDefinitionHandle h)
-    {
-        TypeDefinition td = r.GetTypeDefinition(h);
-        string ns = r.GetString(td.Namespace);
-        string name = r.GetString(td.Name);
-        return string.IsNullOrEmpty(ns) ? name : ns + "." + name;
-    }
-
-    private static string FormatTypeRef(MetadataReader r, TypeReferenceHandle h)
-    {
-        TypeReference tr = r.GetTypeReference(h);
-        string ns = r.GetString(tr.Namespace);
-        string name = r.GetString(tr.Name);
-        return string.IsNullOrEmpty(ns) ? name : ns + "." + name;
-    }
-
-    private static string ClassifyParent(EntityHandle parent) => parent.Kind switch
-    {
-        HandleKind.TypeDefinition => "Type",
-        HandleKind.MethodDefinition => "Method",
-        HandleKind.FieldDefinition => "Field",
-        HandleKind.PropertyDefinition => "Property",
-        HandleKind.EventDefinition => "Event",
-        HandleKind.Parameter => "Parameter",
-        HandleKind.AssemblyDefinition => "Assembly",
-        HandleKind.ModuleDefinition => "Module",
-        _ => "Unknown"
-    };
-
-    private static string ArgsSummary(CustomAttribute attr)
-    {
-        int blobLen = attr.Value.IsNil ? 0 : 1;
-        return blobLen == 0 ? "()" : "(...)";
-    }
-
     private static long TryGetResourceSize(PEFile peFile, ManifestResource mr)
     {
         if (!mr.Implementation.IsNil) return 0;
@@ -245,7 +174,6 @@ public sealed class IlSpySearchIndexer
                 using PEFile pe = new PEFile(path);
                 AssemblyMetadata metadata = AssemblyMetadata.From(path);
                 IndexLiterals(pe, metadata, index);
-                IndexAttributes(pe, metadata, index);
                 IndexResources(pe, metadata, index);
                 progress.Indexed++;
             }

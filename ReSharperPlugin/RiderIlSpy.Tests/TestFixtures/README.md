@@ -8,7 +8,8 @@ depending on production assemblies at test time.
 | File | Fixture source | Purpose |
 |------|---------------|---------|
 | `literals.dll` | `Source/Literals.cs` | String literal search |
-| `attributes.dll` | `Source/Attributes.cs` | Attribute / [Obsolete] search |
+| `attributes.dll` | `Source/Attributes.cs` | A second assembly for the multi-assembly index build |
+| `symbols.dll` | `Source/Symbols.cs` | Symbol name search — one type, method, field, property and event whose names all contain `Needle`, plus an unrelated type, consumed by `SymbolQueryHandlerTests` |
 | `constants.dll` | `Source/Constants.cs` | `Constant` metadata table — one row per `ConstantTypeCode` branch (Int32 / Int64 / Boolean / String / Char / Double / Single) consumed by `ConstantQueryHandler.DecodeConstant` |
 | `resources.dll` | `Source/Resources.cs` + `embedded.txt` | Embedded resource search |
 | `embedded.txt` | (input) | Plain-text resource embedded into `resources.dll` via `-resource:` |
@@ -31,6 +32,7 @@ cd ReSharperPlugin/RiderIlSpy.Tests/TestFixtures
 csc -target:library -out:literals.dll Source/Literals.cs
 csc -target:library -out:attributes.dll Source/Attributes.cs
 csc -target:library -out:constants.dll Source/Constants.cs
+csc -target:library -out:symbols.dll Source/Symbols.cs
 csc -target:library -out:resources.dll -resource:embedded.txt Source/Resources.cs
 ```
 

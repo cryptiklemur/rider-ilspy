@@ -7,7 +7,7 @@ namespace RiderIlSpy.Search;
 public sealed class IlSpySearchPersistence
 {
     private const int FormatMagic = 0x49_4C_53_50; // "ILSP"
-    private const int FormatVersion = 2; // v2: NormalizedPath preserves original case (was lowercased in v1)
+    private const int FormatVersion = 3; // v3: no attribute records
 
     public void Save(IlSpySearchIndex index, string path)
     {
@@ -35,18 +35,6 @@ public sealed class IlSpySearchPersistence
             bw.Write(e.ContainingMethodToken);
             bw.Write(e.IlOffset);
             bw.Write(e.StringValue);
-        }
-
-        List<AttributeIndexEntry> attributes = new List<AttributeIndexEntry>(index.AllAttributeEntries());
-        bw.Write(attributes.Count);
-        foreach (AttributeIndexEntry e in attributes)
-        {
-            bw.Write(e.AssemblyId.NormalizedPath);
-            bw.Write(e.AttributeTypeFullName);
-            bw.Write(e.AttributeTypeShortName);
-            bw.Write(e.TargetMetadataToken);
-            bw.Write(e.TargetKind);
-            bw.Write(e.ArgsSummary);
         }
 
         List<ResourceIndexEntry> resources = new List<ResourceIndexEntry>(index.AllResourceEntries());
@@ -92,18 +80,6 @@ public sealed class IlSpySearchPersistence
                 int ilOffset = br.ReadInt32();
                 string val = br.ReadString();
                 index.AddLiteral(new LiteralIndexEntry(id, usToken, methodTok, ilOffset, val));
-            }
-
-            int attrCount = br.ReadInt32();
-            for (int i = 0; i < attrCount; i++)
-            {
-                AssemblyId id = new AssemblyId(br.ReadString());
-                string fullName = br.ReadString();
-                string shortName = br.ReadString();
-                int targetToken = br.ReadInt32();
-                string targetKind = br.ReadString();
-                string argsSummary = br.ReadString();
-                index.AddAttribute(new AttributeIndexEntry(id, fullName, shortName, targetToken, targetKind, argsSummary));
             }
 
             int resCount = br.ReadInt32();

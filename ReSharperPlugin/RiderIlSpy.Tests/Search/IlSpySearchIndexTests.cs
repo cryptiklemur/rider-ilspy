@@ -57,57 +57,17 @@ public class IlSpySearchIndexTests
         Assert.Empty(index.RegisteredAssemblies());
     }
 
-    // Pins LookupAttributesByShortName's case-insensitive bucket (built with
-    // StringComparer.OrdinalIgnoreCase at IlSpySearchIndex.cs:11). Without
-    // this, a regression that swapped to the default comparer would silently
-    // break "Obsolete"/"obsolete" lookup parity.
     [Fact]
-    public void LookupAttributesByShortName_Is_Case_Insensitive()
+    public void DropAssembly_Removes_Resource_Entries_Too()
     {
         IlSpySearchIndex index = new IlSpySearchIndex();
         AssemblyId asm = AssemblyId.From("/x/a.dll");
-        index.AddAttribute(new AttributeIndexEntry(asm, "System.ObsoleteAttribute", "Obsolete", 0x02_000_001, "Type", ""));
-
-        Assert.Single(index.LookupAttributesByShortName("Obsolete"));
-        Assert.Single(index.LookupAttributesByShortName("obsolete"));
-        Assert.Single(index.LookupAttributesByShortName("OBSOLETE"));
-        Assert.Empty(index.LookupAttributesByShortName("ObsoleteAttribute"));
-    }
-
-    // Pins LookupAttributesByFqn — companion to the short-name path. The FQN
-    // dictionary uses the default (case-sensitive) comparer, so this also
-    // confirms the bucketing intentionally diverges from short-name semantics.
-    [Fact]
-    public void LookupAttributesByFqn_Is_Case_Sensitive()
-    {
-        IlSpySearchIndex index = new IlSpySearchIndex();
-        AssemblyId asm = AssemblyId.From("/x/a.dll");
-        index.AddAttribute(new AttributeIndexEntry(asm, "System.ObsoleteAttribute", "Obsolete", 0x02_000_001, "Type", ""));
-
-        Assert.Single(index.LookupAttributesByFqn("System.ObsoleteAttribute"));
-        Assert.Empty(index.LookupAttributesByFqn("system.obsoleteattribute"));
-    }
-
-    // DropAssembly must clear attributes (both bucket dicts) and resources, not
-    // just literals. A regression that forgot one of the three dicts would
-    // surface as "I deleted the .dll but searches still find its data" — a
-    // memory-leak shape that's hard to spot.
-    [Fact]
-    public void DropAssembly_Removes_Attribute_And_Resource_Entries_Too()
-    {
-        IlSpySearchIndex index = new IlSpySearchIndex();
-        AssemblyId asm = AssemblyId.From("/x/a.dll");
-        index.AddAttribute(new AttributeIndexEntry(asm, "Foo.BarAttribute", "Bar", 0x02_000_001, "Type", ""));
         index.AddResource(new ResourceIndexEntry(asm, 0x28_000_001, "embedded.txt", null, 100L, "text/plain"));
 
-        Assert.NotEmpty(index.LookupAttributesByFqn("Foo.BarAttribute"));
-        Assert.NotEmpty(index.LookupAttributesByShortName("Bar"));
         Assert.NotEmpty(index.LookupResourceCandidatesByTrigram("emb"));
 
         index.DropAssembly(asm);
 
-        Assert.Empty(index.LookupAttributesByFqn("Foo.BarAttribute"));
-        Assert.Empty(index.LookupAttributesByShortName("Bar"));
         Assert.Empty(index.LookupResourceCandidatesByTrigram("emb"));
     }
 
@@ -124,21 +84,6 @@ public class IlSpySearchIndexTests
         List<LiteralIndexEntry> all = index.AllLiteralEntries().ToList();
         Assert.Single(all);
         Assert.Equal("abcdef", all[0].StringValue);
-    }
-
-    // AllAttributeEntries dedupes by (AssemblyId, AttributeTypeFullName,
-    // TargetMetadataToken) so the same entry stored under both FQN and short-
-    // name buckets surfaces once.
-    [Fact]
-    public void AllAttributeEntries_Deduplicates_Across_Buckets()
-    {
-        IlSpySearchIndex index = new IlSpySearchIndex();
-        AssemblyId asm = AssemblyId.From("/x/a.dll");
-        index.AddAttribute(new AttributeIndexEntry(asm, "Foo.BarAttribute", "Bar", 0x02_000_001, "Type", ""));
-
-        List<AttributeIndexEntry> all = index.AllAttributeEntries().ToList();
-        Assert.Single(all);
-        Assert.Equal("Foo.BarAttribute", all[0].AttributeTypeFullName);
     }
 
     // AllResourceEntries dedupes by (AssemblyId, ManifestResourceToken,
