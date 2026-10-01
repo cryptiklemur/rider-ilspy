@@ -9,6 +9,7 @@ depending on production assemblies at test time.
 |------|---------------|---------|
 | `literals.dll` | `Source/Literals.cs` | String literal search |
 | `attributes.dll` | `Source/Attributes.cs` | A second assembly for the multi-assembly index build |
+| `ldftn.dll` | `Source/Ldftn.cs` | A lambda, so the body emits `ldftn`, plus a literal after it. Guards the IL walker's operand sizes in `IlSpySearchIndexerOperandTests` |
 | `symbols.dll` | `Source/Symbols.cs` | Symbol name search — one type, method, field, property and event whose names all contain `Needle`, plus an unrelated type, consumed by `SymbolQueryHandlerTests` |
 | `constants.dll` | `Source/Constants.cs` | `Constant` metadata table — one row per `ConstantTypeCode` branch (Int32 / Int64 / Boolean / String / Char / Double / Single) consumed by `ConstantQueryHandler.DecodeConstant` |
 | `resources.dll` | `Source/Resources.cs` + `embedded.txt` | Embedded resource search |
@@ -33,6 +34,7 @@ csc -target:library -out:literals.dll Source/Literals.cs
 csc -target:library -out:attributes.dll Source/Attributes.cs
 csc -target:library -out:constants.dll Source/Constants.cs
 csc -target:library -out:symbols.dll Source/Symbols.cs
+csc -target:library -out:ldftn.dll Source/Ldftn.cs
 csc -target:library -out:resources.dll -resource:embedded.txt Source/Resources.cs
 ```
 

@@ -22,28 +22,36 @@ public sealed class IlSpySearchIndexer
             try { body = peFile.Reader.GetMethodBody(method.RelativeVirtualAddress); }
             catch { continue; }
 
-            BlobReader il = body.GetILReader();
-            while (il.Offset < il.Length)
+            try { ScanMethodLiterals(body, reader, metadata, methodHandle, target); }
+            catch (BadImageFormatException) { continue; }
+        }
+    }
+
+    private static void ScanMethodLiterals(
+        MethodBodyBlock body,
+        MetadataReader reader,
+        AssemblyMetadata metadata,
+        MethodDefinitionHandle methodHandle,
+        IlSpySearchIndex target)
+    {
+        BlobReader il = body.GetILReader();
+        while (il.Offset < il.Length)
+        {
+            int ilOffset = il.Offset;
+            ILOpCode op = ReadOpCode(ref il);
+            if (op == ILOpCode.Ldstr)
             {
-                int ilOffset = il.Offset;
-                ILOpCode op = ReadOpCode(ref il);
-                if (op == ILOpCode.Ldstr)
-                {
-                    int token = il.ReadInt32();
-                    UserStringHandle ush = MetadataTokens.UserStringHandle(token);
-                    string value = reader.GetUserString(ush);
-                    target.AddLiteral(new LiteralIndexEntry(
-                        metadata.Id,
-                        token,
-                        MetadataTokens.GetToken(methodHandle),
-                        ilOffset,
-                        value));
-                }
-                else
-                {
-                    SkipOperand(ref il, op);
-                }
+                int token = il.ReadInt32();
+                string value = reader.GetUserString(MetadataTokens.UserStringHandle(token));
+                target.AddLiteral(new LiteralIndexEntry(
+                    metadata.Id,
+                    token,
+                    MetadataTokens.GetToken(methodHandle),
+                    ilOffset,
+                    value));
+                continue;
             }
+            SkipOperand(ref il, op);
         }
     }
 
@@ -86,46 +94,23 @@ public sealed class IlSpySearchIndexer
 
     private static void SkipOperand(ref BlobReader r, ILOpCode op)
     {
-        switch (op)
+        if (op == ILOpCode.Switch)
         {
-            case ILOpCode.Switch:
-                int count = r.ReadInt32();
-                r.Offset += count * 4;
-                break;
-            case ILOpCode.Br_s: case ILOpCode.Brfalse_s: case ILOpCode.Brtrue_s:
-            case ILOpCode.Beq_s: case ILOpCode.Bge_s: case ILOpCode.Bgt_s:
-            case ILOpCode.Ble_s: case ILOpCode.Blt_s: case ILOpCode.Bne_un_s:
-            case ILOpCode.Bge_un_s: case ILOpCode.Bgt_un_s: case ILOpCode.Ble_un_s:
-            case ILOpCode.Blt_un_s: case ILOpCode.Leave_s:
-            case ILOpCode.Ldarg_s: case ILOpCode.Ldarga_s: case ILOpCode.Starg_s:
-            case ILOpCode.Ldloc_s: case ILOpCode.Ldloca_s: case ILOpCode.Stloc_s:
-            case ILOpCode.Ldc_i4_s:
-                r.Offset += 1; break;
-            case ILOpCode.Ldarg: case ILOpCode.Ldarga: case ILOpCode.Starg:
-            case ILOpCode.Ldloc: case ILOpCode.Ldloca: case ILOpCode.Stloc:
-                r.Offset += 2; break;
-            case ILOpCode.Br: case ILOpCode.Brfalse: case ILOpCode.Brtrue:
-            case ILOpCode.Beq: case ILOpCode.Bge: case ILOpCode.Bgt:
-            case ILOpCode.Ble: case ILOpCode.Blt: case ILOpCode.Bne_un:
-            case ILOpCode.Bge_un: case ILOpCode.Bgt_un: case ILOpCode.Ble_un:
-            case ILOpCode.Blt_un: case ILOpCode.Leave: case ILOpCode.Ldc_i4:
-            case ILOpCode.Call: case ILOpCode.Calli: case ILOpCode.Callvirt:
-            case ILOpCode.Jmp: case ILOpCode.Newobj: case ILOpCode.Castclass:
-            case ILOpCode.Isinst: case ILOpCode.Unbox: case ILOpCode.Unbox_any:
-            case ILOpCode.Ldfld: case ILOpCode.Ldflda: case ILOpCode.Stfld:
-            case ILOpCode.Ldsfld: case ILOpCode.Ldsflda: case ILOpCode.Stsfld:
-            case ILOpCode.Box: case ILOpCode.Newarr: case ILOpCode.Ldelema:
-            case ILOpCode.Ldelem: case ILOpCode.Stelem: case ILOpCode.Refanyval:
-            case ILOpCode.Mkrefany: case ILOpCode.Ldtoken: case ILOpCode.Ldobj:
-            case ILOpCode.Stobj: case ILOpCode.Cpobj: case ILOpCode.Initobj:
-            case ILOpCode.Sizeof: case ILOpCode.Constrained:
-                r.Offset += 4; break;
-            case ILOpCode.Ldc_i8: case ILOpCode.Ldc_r8:
-                r.Offset += 8; break;
-            case ILOpCode.Ldc_r4:
-                r.Offset += 4; break;
+            int count = r.ReadInt32();
+            r.Offset += count * 4;
+            return;
         }
+        r.Offset += OperandSize(op);
     }
+
+    public static int OperandSize(ILOpCode op) => op.GetOperandType() switch
+    {
+        OperandType.None => 0,
+        OperandType.ShortBrTarget or OperandType.ShortI or OperandType.ShortVariable => 1,
+        OperandType.Variable => 2,
+        OperandType.I8 or OperandType.R => 8,
+        _ => 4,
+    };
 
     private static long TryGetResourceSize(PEFile peFile, ManifestResource mr)
     {
